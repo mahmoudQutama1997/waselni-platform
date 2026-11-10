@@ -1,4 +1,5 @@
 import CustomerStorefront from './customer/CustomerStorefront.tsx'
+import L from './map/leaflet'
 import React,{useEffect,useState,useRef} from 'react'
 import {Routes,Route,Link,Navigate,useNavigate} from 'react-router-dom'
 import {api,login,token,orderSocket,clearAuth,mediaUrl} from './api'
@@ -68,9 +69,9 @@ function RideRouteMap({order,t}){
  const pickupLat=Number(order.pickup_latitude), pickupLng=Number(order.pickup_longitude);
  const dropLat=Number(order.dropoff_latitude), dropLng=Number(order.dropoff_longitude);
  useEffect(()=>{
-  if(!window.L||!mapRef.current||!hasCoordinates)return;
+  if(!L||!mapRef.current||!hasCoordinates)return;
   let cancelled=false;
-  const L=window.L;
+  
   const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([pickupLat,pickupLng],13);
   mapInstance.current=map;
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:20,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
@@ -103,7 +104,7 @@ function RideRouteMap({order,t}){
   return ()=>{cancelled=true;clearTimeout(resizeTimer);map.remove();mapInstance.current=null;captainMarker.current=null};
  },[pickupLat,pickupLng,dropLat,dropLng,t.pickup,t.destination]);
  useEffect(()=>{
-  const L=window.L,map=mapInstance.current;
+  map=mapInstance.current;
   if(!L||!map)return;
   const lat=Number(order.captain_latitude),lng=Number(order.captain_longitude);
   const valid=order.captain_latitude!=null&&order.captain_longitude!=null&&Number.isFinite(lat)&&Number.isFinite(lng);
@@ -137,15 +138,15 @@ function LocationPicker({latitude,longitude,onSelect,label='حدد الموقع 
  const uiLang=document.documentElement.lang||'ar';const isEn=uiLang==='en',isHe=uiLang==='he';const mapLabel=label.includes('المتجر')?(isEn?'Select the store location on the map':isHe?'בחרו את מיקום החנות במפה':label):(isEn?'Select the delivery location on the map':isHe?'בחרו את מיקום המסירה במפה':label);
  const mapWords=isEn?{search:'Search',searching:'Searching…',find:'Search for a city, street or address',current:'◎ My location',instructions:'Click the map or drag the marker to set the exact location.',gps:'Your browser does not support location.',denied:'Could not get your location. Allow location access.'}:isHe?{search:'חיפוש',searching:'מחפש…',find:'חיפוש עיר, רחוב או כתובת',current:'◎ המיקום שלי',instructions:'לחצו על המפה או גררו את הסמן כדי לבחור מיקום מדויק.',gps:'הדפדפן אינו תומך במיקום.',denied:'לא ניתן לקבל את המיקום. יש לאשר גישה למיקום.'}:{search:'بحث',searching:'جارٍ البحث…',find:'ابحث عن مدينة أو شارع أو عنوان',current:'◎ موقعي الحالي',instructions:'اضغط على الخريطة أو اسحب العلامة لتحديد الموقع بدقة.',gps:'المتصفح لا يدعم تحديد الموقع.',denied:'تعذر تحديد موقعك. تأكد من السماح بإذن الموقع.'};
  useEffect(()=>{
-  if(!window.L||!mapRef.current||mapInstance.current)return;
-  const L=window.L;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],12);
+  if(!L||!mapRef.current||mapInstance.current)return;
+;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],12);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:20,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
   map.on('click',e=>pickLocation(e.latlng.lat,e.latlng.lng));mapInstance.current=map;
   const id=setTimeout(()=>map.invalidateSize(),180);
   return()=>{clearTimeout(id);map.remove();mapInstance.current=null;selectedMarker.current=null;referenceMarker.current=null};
  },[]);
  useEffect(()=>{
-  const map=mapInstance.current,L=window.L;if(!map||!L)return;
+ const map=mapInstance.current;if(!map)return;
   const lat=Number(latitude),lng=Number(longitude),valid=latitude!==''&&latitude!==null&&latitude!==undefined&&longitude!==''&&longitude!==null&&longitude!==undefined&&Number.isFinite(lat)&&Number.isFinite(lng);
   if(valid){if(selectedMarker.current)selectedMarker.current.setLatLng([lat,lng]);else {selectedMarker.current=L.marker([lat,lng],{draggable:true}).addTo(map).bindPopup('موقع التوصيل');selectedMarker.current.on('dragend',e=>{const pt=e.target.getLatLng();pickLocation(pt.lat,pt.lng)})}}
   else if(selectedMarker.current){map.removeLayer(selectedMarker.current);selectedMarker.current=null;}
@@ -162,8 +163,8 @@ function LocationPicker({latitude,longitude,onSelect,label='حدد الموقع 
 
 function AdminOverviewMap({stores=[],orders=[]}){
  const mapRef=useRef(null),mapInstance=useRef(null),layerRef=useRef(null);
- useEffect(()=>{if(!window.L||!mapRef.current||mapInstance.current)return;const L=window.L;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],10);L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:20,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);layerRef.current=L.layerGroup().addTo(map);mapInstance.current=map;const id=setTimeout(()=>map.invalidateSize(),150);return()=>{clearTimeout(id);map.remove();mapInstance.current=null;layerRef.current=null}},[]);
- useEffect(()=>{const map=mapInstance.current,L=window.L,layer=layerRef.current;if(!map||!L||!layer)return;layer.clearLayers();const bounds=[];const popup=(title,sub)=>{const el=document.createElement('div');const b=document.createElement('b');b.textContent=title||'—';el.appendChild(b);if(sub){const p=document.createElement('p');p.textContent=sub;el.appendChild(p)}return el};
+ useEffect(()=>{if(!L||!mapRef.current||mapInstance.current)return;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],10);L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:20,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);layerRef.current=L.layerGroup().addTo(map);mapInstance.current=map;const id=setTimeout(()=>map.invalidateSize(),150);return()=>{clearTimeout(id);map.remove();mapInstance.current=null;layerRef.current=null}},[]);
+ useEffect(()=>{const map=mapInstance.current,layer=layerRef.current;if(!map||!layer)return;layer.clearLayers();const bounds=[];const popup=(title,sub)=>{const el=document.createElement('div');const b=document.createElement('b');b.textContent=title||'—';el.appendChild(b);if(sub){const p=document.createElement('p');p.textContent=sub;el.appendChild(p)}return el};
   stores.forEach(s=>{if(s.latitude==null||s.longitude==null)return;const pt=[Number(s.latitude),Number(s.longitude)];if(!pt.every(Number.isFinite))return;L.marker(pt).addTo(layer).bindPopup(popup(`متجر: ${s.shop_name}`,`${s.address||''} · ${s.is_open?'مفتوح':'مغلق'}`));bounds.push(pt)});
   orders.filter(o=>!['completed','cancelled'].includes(o.status)).forEach(o=>{const pts=[];if(o.pickup_latitude!=null&&o.pickup_longitude!=null)pts.push([Number(o.pickup_latitude),Number(o.pickup_longitude)]);if(o.dropoff_latitude!=null&&o.dropoff_longitude!=null)pts.push([Number(o.dropoff_latitude),Number(o.dropoff_longitude)]);pts.forEach((pt,i)=>{if(!pt.every(Number.isFinite))return;L.circleMarker(pt,{radius:8,color:'#fff',weight:2,fillColor:i?'#df4d67':'#16a36a',fillOpacity:1}).addTo(layer).bindPopup(popup(`طلب #${o.id} · ${i?'وجهة الزبون':'المتجر'}`,`${o.merchant_name||''} · ${o.dropoff_address||''}`));bounds.push(pt)});if(pts.length===2)L.polyline(pts,{color:'#8054c6',weight:3,dashArray:'6 7'}).addTo(layer);if(o.captain_latitude!=null&&o.captain_longitude!=null){const captainPt=[Number(o.captain_latitude),Number(o.captain_longitude)];if(captainPt.every(Number.isFinite)){L.circleMarker(captainPt,{radius:11,color:'#fff',weight:3,fillColor:'#7650bd',fillOpacity:1}).addTo(layer).bindPopup(popup(`الكابتن · طلب #${o.id}`,o.captain_location_updated_at?`آخر تحديث: ${new Date(o.captain_location_updated_at).toLocaleTimeString()}`:'موقع الكابتن'));bounds.push(captainPt)}}});
   if(bounds.length===1)map.setView(bounds[0],13);else if(bounds.length>1)map.fitBounds(bounds,{padding:[35,35],maxZoom:14});
@@ -263,9 +264,9 @@ function RideBooking({t,lang}){
   }
  }
  useEffect(()=>{
-  if(!window.L||!mapRef.current||mapInstance.current)return;
-  const map=window.L.map(mapRef.current).setView([31.95,35.21],13);
-  window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:20,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+  if(!L||!mapRef.current||mapInstance.current)return;
+  const map=L.map(mapRef.current).setView([31.95,35.21],13);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:20,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
   map.on('click',e=>{
    const which=activePointRef.current==='pickup'?'pickup':'dropoff';
    setPoint(which,e.latlng.lat,e.latlng.lng,which==='pickup'?tRef.current.pickupSelected:tRef.current.destinationSelected);
@@ -276,13 +277,13 @@ function RideBooking({t,lang}){
   return()=>{clearTimeout(resizeTimer);map.remove();mapInstance.current=null;markers.current={}};
  },[]);
  useEffect(()=>{
-  const map=mapInstance.current;if(!map||!window.L)return;
+  const map=mapInstance.current;if(!map||!L)return;
   ['pickup','dropoff'].forEach(which=>{
    const lat=Number(form[`${which}_latitude`]),lng=Number(form[`${which}_longitude`]);
    if(!Number.isFinite(lat)||!Number.isFinite(lng)||!form[`${which}_latitude`]||!form[`${which}_longitude`]){if(markers.current[which]){map.removeLayer(markers.current[which]);delete markers.current[which]}return;}
    const point=[lat,lng];
    if(markers.current[which]){markers.current[which].setLatLng(point);markers.current[which].setPopupContent(which==='pickup'?t.pickup:t.destination)}
-   else markers.current[which]=window.L.marker(point).addTo(map).bindPopup(which==='pickup'?t.pickup:t.destination);
+   else markers.current[which]=L.marker(point).addTo(map).bindPopup(which==='pickup'?t.pickup:t.destination);
   });
   const points=['pickup','dropoff'].filter(k=>form[`${k}_latitude`]!==''&&form[`${k}_longitude`]!==''&&Number.isFinite(Number(form[`${k}_latitude`]))&&Number.isFinite(Number(form[`${k}_longitude`]))).map(k=>[Number(form[`${k}_latitude`]),Number(form[`${k}_longitude`])]);
   if(points.length===1)map.setView(points[0],15);else if(points.length===2)map.fitBounds(points,{padding:[35,35]});

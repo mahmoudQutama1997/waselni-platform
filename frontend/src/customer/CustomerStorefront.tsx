@@ -1,4 +1,4 @@
-
+import L from '../map/leaflet';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
@@ -192,7 +192,6 @@ function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { m
   const [query, setQuery] = useState('');
   const [mapError, setMapError] = useState('');
   useEffect(() => {
-    const L = (window as any).L;
     if (!L || !mapRef.current || mapInstance.current) return;
     const map = L.map(mapRef.current, { scrollWheelZoom: false }).setView([31.95, 35.21], 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
@@ -202,7 +201,8 @@ function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { m
     return () => { window.clearTimeout(timer); map.remove(); mapInstance.current = null; customerMarker.current = null; storeMarker.current = null; };
   }, []);
   useEffect(() => {
-    const L = (window as any).L, map = mapInstance.current;
+    const map = mapInstance.current;
+if (!map) return;
     if (!L || !map) return;
     if (merchant?.latitude != null && merchant?.longitude != null) {
       const point = [Number(merchant.latitude), Number(merchant.longitude)];
