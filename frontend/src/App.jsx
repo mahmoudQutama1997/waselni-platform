@@ -104,7 +104,7 @@ function RideRouteMap({order,t}){
   return ()=>{cancelled=true;clearTimeout(resizeTimer);map.remove();mapInstance.current=null;captainMarker.current=null};
  },[pickupLat,pickupLng,dropLat,dropLng,t.pickup,t.destination]);
  useEffect(()=>{
-  map=mapInstance.current;
+  const map=mapInstance.current;
   if(!L||!map)return;
   const lat=Number(order.captain_latitude),lng=Number(order.captain_longitude);
   const valid=order.captain_latitude!=null&&order.captain_longitude!=null&&Number.isFinite(lat)&&Number.isFinite(lng);
