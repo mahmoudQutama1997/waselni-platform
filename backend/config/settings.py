@@ -4,6 +4,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
+from corsheaders.defaults import default_headers
+from datetime import timedelta
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -12,9 +14,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
 DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 
 if not DEBUG and SECRET_KEY == "dev-only-change-me":
-    raise ImproperlyConfigured(
-        "Set a unique SECRET_KEY before running with DEBUG=False."
-    )
+    raise ImproperlyConfigured("Set a unique SECRET_KEY before running with DEBUG=False.")
 
 ALLOWED_HOSTS = [
     x.strip()
@@ -84,7 +84,7 @@ else:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3"
         }
     }
 
@@ -106,11 +106,13 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 MEDIA_URL = "/media/"
-MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT") or (BASE_DIR / "media"))
+MEDIA_ROOT = Path(
+    os.getenv("MEDIA_ROOT") or (BASE_DIR / "media")
+)
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# CORS: Official application domains
+# CORS configuration
 CORS_ALLOWED_ORIGINS = [
     x.strip()
     for x in os.getenv(
@@ -120,7 +122,11 @@ CORS_ALLOWED_ORIGINS = [
     if x.strip()
 ]
 
-# CORS: Only approved WASELNI Vercel Preview domains
+CORS_ALLOW_HEADERS = [
+    *default_headers,
+    "idempotency-key",
+]
+
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://waselni-customer1-[a-z0-9-]+-mahmoud13\.vercel\.app$",
     r"^https://waselni-merchan-[a-z0-9-]+-mahmoud13\.vercel\.app$",
@@ -136,14 +142,12 @@ REST_FRAMEWORK = {
     ),
 }
 
-from datetime import timedelta
-
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=8),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
 
-# HTTPS protections
+# HTTPS protections default on for production and remain off for local development.
 SECURE_SSL_REDIRECT = os.getenv(
     "SECURE_SSL_REDIRECT",
     str(not DEBUG)
@@ -170,4 +174,7 @@ CSRF_TRUSTED_ORIGINS = [
     if x.strip()
 ]
 
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_PROXY_SSL_HEADER = (
+    "HTTP_X_FORWARDED_PROTO",
+    "https"
+)
