@@ -194,7 +194,7 @@ function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { m
   useEffect(() => {
     if (!L || !mapRef.current || mapInstance.current) return;
     const map = L.map(mapRef.current, { scrollWheelZoom: false }).setView([31.95, 35.21], 12);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+    L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_bright/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '&copy; Stadia Maps &copy; OpenStreetMap contributors' }).addTo(map);
     map.on('click', (event: any) => select(event.latlng.lat, event.latlng.lng));
     mapInstance.current = map;
     const timer = window.setTimeout(() => map.invalidateSize(), 180);

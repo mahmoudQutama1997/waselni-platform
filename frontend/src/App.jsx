@@ -74,7 +74,7 @@ function RideRouteMap({order,t}){
   
   const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([pickupLat,pickupLng],13);
   mapInstance.current=map;
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+  L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_bright/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'&copy; Stadia Maps &copy; OpenStreetMap contributors'}).addTo(map);
   const start=L.circleMarker([pickupLat,pickupLng],{radius:9,color:'#fff',weight:3,fillColor:'#16a36a',fillOpacity:1}).addTo(map).bindPopup(t.pickup);
   const end=L.circleMarker([dropLat,dropLng],{radius:9,color:'#fff',weight:3,fillColor:'#e34f66',fillOpacity:1}).addTo(map).bindPopup(t.destination);
   const captainLat=Number(order.captain_latitude),captainLng=Number(order.captain_longitude);
@@ -140,7 +140,7 @@ function LocationPicker({latitude,longitude,onSelect,label='حدد الموقع 
  useEffect(()=>{
   if(!L||!mapRef.current||mapInstance.current)return;
 ;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+  L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_bright/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'&copy; Stadia Maps &copy; OpenStreetMap contributors'}).addTo(map);
   map.on('click',e=>pickLocation(e.latlng.lat,e.latlng.lng));mapInstance.current=map;
   const id=setTimeout(()=>map.invalidateSize(),180);
   return()=>{clearTimeout(id);map.remove();mapInstance.current=null;selectedMarker.current=null;referenceMarker.current=null};
@@ -163,7 +163,7 @@ function LocationPicker({latitude,longitude,onSelect,label='حدد الموقع 
 
 function AdminOverviewMap({stores=[],orders=[]}){
  const mapRef=useRef(null),mapInstance=useRef(null),layerRef=useRef(null);
- useEffect(()=>{if(!L||!mapRef.current||mapInstance.current)return;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],10);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);layerRef.current=L.layerGroup().addTo(map);mapInstance.current=map;const id=setTimeout(()=>map.invalidateSize(),150);return()=>{clearTimeout(id);map.remove();mapInstance.current=null;layerRef.current=null}},[]);
+ useEffect(()=>{if(!L||!mapRef.current||mapInstance.current)return;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],10);L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_bright/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'&copy; Stadia Maps &copy; OpenStreetMap contributors'}).addTo(map);layerRef.current=L.layerGroup().addTo(map);mapInstance.current=map;const id=setTimeout(()=>map.invalidateSize(),150);return()=>{clearTimeout(id);map.remove();mapInstance.current=null;layerRef.current=null}},[]);
  useEffect(()=>{const map=mapInstance.current,layer=layerRef.current;if(!map||!layer)return;layer.clearLayers();const bounds=[];const popup=(title,sub)=>{const el=document.createElement('div');const b=document.createElement('b');b.textContent=title||'—';el.appendChild(b);if(sub){const p=document.createElement('p');p.textContent=sub;el.appendChild(p)}return el};
   stores.forEach(s=>{if(s.latitude==null||s.longitude==null)return;const pt=[Number(s.latitude),Number(s.longitude)];if(!pt.every(Number.isFinite))return;L.marker(pt).addTo(layer).bindPopup(popup(`متجر: ${s.shop_name}`,`${s.address||''} · ${s.is_open?'مفتوح':'مغلق'}`));bounds.push(pt)});
   orders.filter(o=>!['completed','cancelled'].includes(o.status)).forEach(o=>{const pts=[];if(o.pickup_latitude!=null&&o.pickup_longitude!=null)pts.push([Number(o.pickup_latitude),Number(o.pickup_longitude)]);if(o.dropoff_latitude!=null&&o.dropoff_longitude!=null)pts.push([Number(o.dropoff_latitude),Number(o.dropoff_longitude)]);pts.forEach((pt,i)=>{if(!pt.every(Number.isFinite))return;L.circleMarker(pt,{radius:8,color:'#fff',weight:2,fillColor:i?'#df4d67':'#16a36a',fillOpacity:1}).addTo(layer).bindPopup(popup(`طلب #${o.id} · ${i?'وجهة الزبون':'المتجر'}`,`${o.merchant_name||''} · ${o.dropoff_address||''}`));bounds.push(pt)});if(pts.length===2)L.polyline(pts,{color:'#8054c6',weight:3,dashArray:'6 7'}).addTo(layer);if(o.captain_latitude!=null&&o.captain_longitude!=null){const captainPt=[Number(o.captain_latitude),Number(o.captain_longitude)];if(captainPt.every(Number.isFinite)){L.circleMarker(captainPt,{radius:11,color:'#fff',weight:3,fillColor:'#7650bd',fillOpacity:1}).addTo(layer).bindPopup(popup(`الكابتن · طلب #${o.id}`,o.captain_location_updated_at?`آخر تحديث: ${new Date(o.captain_location_updated_at).toLocaleTimeString()}`:'موقع الكابتن'));bounds.push(captainPt)}}});
@@ -266,7 +266,7 @@ function RideBooking({t,lang}){
  useEffect(()=>{
   if(!L||!mapRef.current||mapInstance.current)return;
   const map=L.map(mapRef.current).setView([31.95,35.21],13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+  L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_bright/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'&copy; Stadia Maps &copy; OpenStreetMap contributors'}).addTo(map);
   map.on('click',e=>{
    const which=activePointRef.current==='pickup'?'pickup':'dropoff';
    setPoint(which,e.latlng.lat,e.latlng.lng,which==='pickup'?tRef.current.pickupSelected:tRef.current.destinationSelected);
