@@ -127,6 +127,19 @@ MEDIA_ROOT = Path(
     os.getenv("MEDIA_ROOT") or (BASE_DIR / "media")
 )
 
+# Public images are uploaded to ImageKit when both the private key and the URL
+# endpoint are set. Without them every upload stays on local disk as before.
+# Captain documents always stay local regardless of these values.
+IMAGEKIT_PUBLIC_KEY = os.getenv("IMAGEKIT_PUBLIC_KEY", "").strip()
+IMAGEKIT_PRIVATE_KEY = os.getenv("IMAGEKIT_PRIVATE_KEY", "").strip()
+IMAGEKIT_URL_ENDPOINT = os.getenv("IMAGEKIT_URL_ENDPOINT", "").strip().rstrip("/")
+IMAGEKIT_UPLOAD_FOLDER_PREFIX = os.getenv("IMAGEKIT_UPLOAD_FOLDER_PREFIX", "waselni").strip().strip("/")
+
+STORAGES = {
+    "default": {"BACKEND": "core.storage.WaselniMediaStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # CORS configuration

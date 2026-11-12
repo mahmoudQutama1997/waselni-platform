@@ -377,6 +377,18 @@ export default defineConfig(({ mode }) => {
         '/ws': { target: backend, ws: true, changeOrigin: true },
       },
     },
+    // `vite preview --mode <portal>` keeps the production build talking to a
+    // local API through the same origin, matching the dev proxy above.
+    preview: {
+      host: '0.0.0.0',
+      port: 4173,
+      strictPort: true,
+      proxy: {
+        '/api': { target: backend, changeOrigin: true },
+        '/media': { target: backend, changeOrigin: true },
+        '/ws': { target: backend, ws: true, changeOrigin: true },
+      },
+    },
     build: {
       outDir: portal === 'all' ? 'dist' : `dist/${portal}`,
       emptyOutDir: true,
