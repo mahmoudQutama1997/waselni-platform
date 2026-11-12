@@ -22,6 +22,13 @@ ALLOWED_HOSTS = [
     if x.strip()
 ]
 
+# Render injects the public hostname of the web service. Keeping it in the
+# allow-list means the blueprint still boots when Render appends a suffix
+# because the requested service name is already taken.
+_render_host = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
+if _render_host and _render_host not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(_render_host)
+
 INSTALLED_APPS = [
     "daphne",
     "django.contrib.auth",
