@@ -1,5 +1,6 @@
 import uuid
 import os
+import posixpath
 import secrets
 import calendar
 import math
@@ -7,8 +8,11 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.conf import settings
+from django.core.exceptions import SuspiciousFileOperation
 from django.db import connection, transaction
 from django.db.models import Sum, Q
+from django.http import FileResponse
 from django.utils import timezone
 from rest_framework import generics, viewsets
 from rest_framework.views import APIView
@@ -172,6 +176,73 @@ class HealthView(APIView):
         except Exception:
             return Response({"status": "error", "database": "unavailable"}, status=503)
         return Response({"status": "ok", "database": "ok", "time": timezone.now().isoformat()})
+
+
+CAPTAIN_DOCUMENT_FIELDS = {
+    "identity": "identity_document",
+    "license": "driving_license_document",
+    "insurance": "insurance_document",
+}
+
+
+def _captain_document_is_private(document):
+    """Return True only when the stored name points inside captain_documents."""
+    normalised = posixpath.normpath(str(document.name or "").replace("\\", "/"))
+    segments = [segment for segment in normalised.split("/") if segment and segment not in (".", "..")]
+    if len(segments) < 2 or segments[0].rstrip(" .").casefold() != "captain_documents":
+        return False
+    try:
+        storage_path = document.path
+    except NotImplementedError:
+        # Remote storage has no local path; the name check above still applies.
+        return True
+    except (OSError, ValueError, SuspiciousFileOperation):
+        return False
+    try:
+        media_root = os.path.realpath(settings.MEDIA_ROOT)
+        private_root = os.path.realpath(os.path.join(media_root, "captain_documents"))
+        target = os.path.realpath(storage_path)
+        return os.path.commonpath([target, private_root]) == private_root
+    except (OSError, ValueError):
+        return False
+
+
+class CaptainDocumentView(APIView):
+    """Stream one captain document to its owner or an admin.
+
+    Files stay under MEDIA_ROOT so existing uploads are never moved or
+    renamed. /media/captain_documents/ is blocked; knowing a file URL is not
+    enough because this view requires an authenticated, authorised user.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, profile_id, field):
+        field_name = CAPTAIN_DOCUMENT_FIELDS.get(field)
+        if not field_name:
+            raise NotFound("Document not found.")
+        try:
+            profile = CaptainProfile.objects.select_related("user").get(pk=profile_id)
+        except CaptainProfile.DoesNotExist:
+            raise NotFound("Document not found.")
+        is_admin = request.user.role == "admin"
+        is_owner = request.user.role == "captain" and profile.user_id == request.user.id
+        if not (is_admin or is_owner):
+            raise PermissionDenied("You are not allowed to access this document.")
+        document = getattr(profile, field_name)
+        if not document:
+            raise NotFound("Document not found.")
+        if not _captain_document_is_private(document):
+            raise NotFound("Document not found.")
+        try:
+            handle = document.open("rb")
+        except (FileNotFoundError, OSError, ValueError, SuspiciousFileOperation):
+            raise NotFound("Document not found.")
+        response = FileResponse(handle, as_attachment=False, filename=os.path.basename(document.name))
+        response["Cache-Control"] = "private, no-store"
+        response["Pragma"] = "no-cache"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
 
 
 class AccountProfileView(APIView):
