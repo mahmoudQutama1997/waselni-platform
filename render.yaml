@@ -1,0 +1,64 @@
+# Render blueprint for the shared Waselni Django/Channels API.
+# The three installable PWAs and the admin portal are deployed separately on
+# Vercel from the frontend/ directory (see PWA_DEPLOYMENT_AND_INSTALL_AR.md).
+
+databases:
+  - name: waselni-db
+    databaseName: waselni
+    user: waselni
+    plan: free
+    region: frankfurt
+
+services:
+  - type: keyvalue
+    name: waselni-kv
+    plan: free
+    region: frankfurt
+    ipAllowList: []
+
+  - type: web
+    name: waselni-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python manage.py migrate
+    startCommand: daphne -b 0.0.0.0 -p $PORT config.asgi:application
+    healthCheckPath: /api/health/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: waselni-api.onrender.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: waselni-db
+          property: connectionString
+      - key: REDIS_HOST
+        fromService:
+          type: keyvalue
+          name: waselni-kv
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: keyvalue
+          name: waselni-kv
+          property: port
+      - key: SERVE_MEDIA
+        value: "True"
+      - key: SECURE_SSL_REDIRECT
+        value: "True"
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: RIDE_BASE_FARE
+        sync: false
+      - key: RIDE_PRICE_PER_KM
+        sync: false
+      - key: RIDE_CHECKPOINT_FEE
+        sync: false

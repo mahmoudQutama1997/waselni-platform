@@ -4,6 +4,7 @@ import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, mediaUrl } from '../api';
 import type { CartLine, Merchant, Order, Product } from './types';
+import { MAP_TILE_URL, MAP_ATTRIBUTION, GEOCODING_REVERSE_URL, GEOCODING_SEARCH_URL, geocodeUrl } from '../config';
 
 type Props = { lang: 'ar' | 'en' | 'he' };
 
@@ -194,7 +195,7 @@ function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { m
   useEffect(() => {
     if (!L || !mapRef.current || mapInstance.current) return;
     const map = L.map(mapRef.current, { scrollWheelZoom: false }).setView([31.95, 35.21], 12);
-    L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_bright/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '&copy; Stadia Maps &copy; OpenStreetMap contributors' }).addTo(map);
+    L.tileLayer(MAP_TILE_URL, { maxZoom: 19, attribution: MAP_ATTRIBUTION }).addTo(map);
     map.on('click', (event: any) => select(event.latlng.lat, event.latlng.lng));
     mapInstance.current = map;
     const timer = window.setTimeout(() => map.invalidateSize(), 180);
@@ -226,15 +227,15 @@ if (!map) return;
   async function select(lat: number, lng: number) {
     onSelect(lat, lng);
     try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=${document.documentElement.lang || 'ar'}`);
+      const response = await fetch(geocodeUrl(GEOCODING_REVERSE_URL, { format: 'jsonv2', lat, lon: lng, 'accept-language': document.documentElement.lang || 'ar' }));
       if (response.ok) { const data = await response.json(); if (data.display_name) onSelect(lat, lng, data.display_name); }
     } catch { /* Coordinates remain usable if reverse geocoding is unavailable. */ }
   }
-  async function search(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!query.trim()) return;
+  async function search() {
+    if (!query.trim()) return;
     try {
       setMapError('');
-      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`);
+      const response = await fetch(geocodeUrl(GEOCODING_SEARCH_URL, { format: 'jsonv2', limit: 1, q: query }));
       if (!response.ok) throw new Error('تعذر البحث عن العنوان');
       const results = await response.json(); if (!results.length) throw new Error('لم يتم العثور على العنوان');
       const lat = Number(results[0].lat), lng = Number(results[0].lon);
@@ -245,7 +246,7 @@ if (!map) return;
     if (!navigator.geolocation) { setMapError('المتصفح لا يدعم تحديد الموقع'); return; }
     navigator.geolocation.getCurrentPosition(position => { const { latitude: lat, longitude: lng } = position.coords; select(lat, lng); mapInstance.current?.setView([lat, lng], 16); setMapError(''); }, () => setMapError('اسمح بالوصول إلى الموقع من المتصفح'), { enableHighAccuracy: true, timeout: 12000 });
   }
-  return <div className="checkout-location-wrap"><form className="checkout-location-tools" onSubmit={search}><input value={query} onChange={event => setQuery(event.target.value)} placeholder="ابحث عن المدينة أو الشارع"/><button type="submit">بحث</button><button type="button" className="secondary" onClick={locate}>{t.useLocation}</button></form><div ref={mapRef} className="checkout-location-map"/><p className="muted-note">{t.selectLocation} {merchant ? `${t.storeLocation}: ${merchant.shop_name}` : ''}</p><div className="checkout-map-legend"><span><i className="checkout-store-dot"/> {t.storeLocation}</span><span><i className="checkout-customer-dot"/> {t.customerLocation}</span></div>{latitude != null && longitude != null && <small>{latitude.toFixed(6)}, {longitude.toFixed(6)}</small>}{mapError && <p className="error">{mapError}</p>}</div>;
+  return <div className="checkout-location-wrap"><div className="checkout-location-tools"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(); } }} placeholder="ابحث عن المدينة أو الشارع"/><button type="button" onClick={() => search()}>بحث</button><button type="button" className="secondary" onClick={locate}>{t.useLocation}</button></div><div ref={mapRef} className="checkout-location-map"/><p className="muted-note">{t.selectLocation} {merchant ? `${t.storeLocation}: ${merchant.shop_name}` : ''}</p><div className="checkout-map-legend"><span><i className="checkout-store-dot"/> {t.storeLocation}</span><span><i className="checkout-customer-dot"/> {t.customerLocation}</span></div>{latitude != null && longitude != null && <small>{latitude.toFixed(6)}, {longitude.toFixed(6)}</small>}{mapError && <p className="error">{mapError}</p>}</div>;
 }
 
 export default function CustomerStorefront({ lang }: Props) {

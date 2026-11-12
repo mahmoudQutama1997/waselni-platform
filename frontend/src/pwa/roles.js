@@ -1,0 +1,142 @@
+// Shared role metadata. Imported by both the Vite build pipeline and the React app.
+// Keep this file dependency-free so Node can import it directly from vite.config.js.
+
+export const ROLE_ORDER = ['customer', 'merchant', 'captain', 'admin', 'all']
+
+export const ROLES = {
+  customer: {
+    key: 'customer',
+    startUrl: '/',
+    appNameAr: 'وصلني للزبائن',
+    appNameEn: 'Waselni Customer',
+    shortNameAr: 'وصلني زبون',
+    shortNameEn: 'Waselni Customer',
+    descriptionAr: 'تسوّق من متاجر فلسطين، اطلب فسبا، وتابع طلبك مباشرة.',
+    descriptionEn: 'Shop local Palestinian stores, request a scooter ride and track your delivery live.',
+    themeColor: '#6d35c8',
+    backgroundColor: '#f8f7fc',
+    accent: '#8b5ce0',
+    glyph: 'bag',
+    category: 'shopping',
+    orientation: 'portrait',
+    shortcuts: [
+      { name: 'طلباتي', short_name: 'الطلبات', url: '/?app=customer&shortcut=orders', icons: [{ src: 'icons/icon-192.png', sizes: '192x192' }] },
+      { name: 'اطلب فسبا', short_name: 'فسبا', url: '/?app=customer&shortcut=ride', icons: [{ src: 'icons/icon-192.png', sizes: '192x192' }] },
+    ],
+  },
+  merchant: {
+    key: 'merchant',
+    startUrl: '/',
+    appNameAr: 'وصلني للتجار',
+    appNameEn: 'Waselni Merchant',
+    shortNameAr: 'وصلني تاجر',
+    shortNameEn: 'Waselni Merchant',
+    descriptionAr: 'إدارة المتجر والمنتجات واستقبال الطلبات وتنبيهات الطلبات الجديدة.',
+    descriptionEn: 'Manage your store and products, receive orders and get new-order alerts.',
+    themeColor: '#4b2e83',
+    backgroundColor: '#f8f6fc',
+    accent: '#9c6ade',
+    glyph: 'store',
+    category: 'business',
+    orientation: 'portrait',
+    shortcuts: [
+      { name: 'الطلبات الجديدة', short_name: 'الطلبات', url: '/orders?shortcut=orders', icons: [{ src: 'icons/icon-192.png', sizes: '192x192' }] },
+      { name: 'إضافة منتج', short_name: 'المنتجات', url: '/catalog?shortcut=products', icons: [{ src: 'icons/icon-192.png', sizes: '192x192' }] },
+    ],
+  },
+  captain: {
+    key: 'captain',
+    startUrl: '/',
+    appNameAr: 'وصلني للكباتن',
+    appNameEn: 'Waselni Captain',
+    shortNameAr: 'وصلني كابتن',
+    shortNameEn: 'Waselni Captain',
+    descriptionAr: 'استقبال طلبات التوصيل، مشاركة الموقع، وإدارة الرحلة والتسوية النقدية.',
+    descriptionEn: 'Receive delivery orders, share your live location and manage trips and cash settlements.',
+    themeColor: '#1f5a55',
+    backgroundColor: '#f4faf8',
+    accent: '#3ca88f',
+    glyph: 'scooter',
+    category: 'business',
+    orientation: 'portrait',
+    shortcuts: [
+      { name: 'طلباتي', short_name: 'الطلبات', url: '/orders?shortcut=orders', icons: [{ src: 'icons/icon-192.png', sizes: '192x192' }] },
+      { name: 'مساحة العمل', short_name: 'البدء', url: '/captain?shortcut=workspace', icons: [{ src: 'icons/icon-192.png', sizes: '192x192' }] },
+    ],
+  },
+  admin: {
+    key: 'admin',
+    startUrl: '/admin',
+    appNameAr: 'وصلني للإدارة',
+    appNameEn: 'Waselni Admin',
+    shortNameAr: 'وصلني إدارة',
+    shortNameEn: 'Waselni Admin',
+    descriptionAr: 'مركز تحكم وصلني لمتابعة الطلبات والمتاجر والكباتن والاشتراكات.',
+    descriptionEn: 'Waselni control center for orders, stores, captains and subscriptions.',
+    themeColor: '#33245a',
+    backgroundColor: '#f6f6fb',
+    accent: '#7c5cc4',
+    glyph: 'grid',
+    category: 'business',
+    orientation: 'any',
+    shortcuts: [
+      { name: 'الطلبات', short_name: 'الطلبات', url: '/orders?shortcut=orders', icons: [{ src: 'icons/icon-192.png', sizes: '192x192' }] },
+      { name: 'مركز التحكم', short_name: 'التحكم', url: '/admin?shortcut=admin', icons: [{ src: 'icons/icon-192.png', sizes: '192x192' }] },
+    ],
+  },
+  all: {
+    key: 'all',
+    startUrl: '/',
+    appNameAr: 'وصلني',
+    appNameEn: 'Waselni',
+    shortNameAr: 'وصلني',
+    shortNameEn: 'Waselni',
+    descriptionAr: 'منصة وصلني الموحدة للتوصيل والطلبات.',
+    descriptionEn: 'The unified Waselni delivery platform.',
+    themeColor: '#6d35c8',
+    backgroundColor: '#f8f7fc',
+    accent: '#8b5ce0',
+    glyph: 'w',
+    category: 'shopping',
+    orientation: 'any',
+    shortcuts: [],
+  },
+}
+
+export const MOBILE_NAV = {
+  customer: [
+    { to: '/', labelKey: 'home', icon: 'home', end: true },
+    { to: '/orders', labelKey: 'orders', icon: 'orders' },
+    { to: '/ride', labelKey: 'rideService', icon: 'ride' },
+    { to: '/account', labelKey: 'accountProfile', icon: 'user' },
+  ],
+  merchant: [
+    { to: '/', labelKey: 'home', icon: 'home', end: true },
+    { to: '/catalog', labelKey: 'catalog', icon: 'catalog' },
+    { to: '/orders', labelKey: 'orders', icon: 'orders' },
+    { to: '/reports', labelKey: 'reports', icon: 'reports' },
+    { to: '/account', labelKey: 'accountProfile', icon: 'user' },
+  ],
+  captain: [
+    { to: '/captain', labelKey: 'captain', icon: 'captain' },
+    { to: '/orders', labelKey: 'orders', icon: 'orders' },
+    { to: '/settlements', labelKey: 'settlements', icon: 'money' },
+    { to: '/account', labelKey: 'accountProfile', icon: 'user' },
+  ],
+  admin: [
+    { to: '/admin', labelKey: 'dashboard', icon: 'dashboard' },
+    { to: '/orders', labelKey: 'orders', icon: 'orders' },
+    { to: '/settlements', labelKey: 'settlements', icon: 'money' },
+    { to: '/support', labelKey: 'support', icon: 'support' },
+    { to: '/account', labelKey: 'accountProfile', icon: 'user' },
+  ],
+  all: [
+    { to: '/', labelKey: 'home', icon: 'home', end: true },
+    { to: '/orders', labelKey: 'orders', icon: 'orders' },
+    { to: '/account', labelKey: 'accountProfile', icon: 'user' },
+  ],
+}
+
+export function getRoleMeta(role) {
+  return ROLES[role] || ROLES.all
+}

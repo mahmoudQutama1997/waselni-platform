@@ -1,3 +1,5 @@
+import { subscribeToOrders } from './realtime/orders.js';
+
 // Keep API requests same-origin by default. Vite proxies /api and /ws to Django,
 // so the app also works when opened from another device on the same network.
 const configuredBase = (import.meta.env.VITE_API_URL || '/api').trim();
@@ -17,6 +19,8 @@ export function token(){ return localStorage.getItem('waselni_access'); }
 export function clearAuth(){
   localStorage.removeItem('waselni_access');
   localStorage.removeItem('waselni_refresh');
+  try { localStorage.removeItem('waselni_customer_cart'); } catch { /* storage may be disabled */ }
+  window.dispatchEvent(new CustomEvent('waselni:auth-cleared'));
 }
 
 async function decodeResponse(res){
@@ -83,13 +87,6 @@ export async function login(username,password){
 }
 
 export function orderSocket(onMessage){
-  const access = token();
-  if (!access) return null;
-  const apiOrigin = API_BASE.startsWith('http') ? new URL(API_BASE).origin : window.location.origin;
-  const socketUrl = new URL('/ws/orders/', apiOrigin);
-  socketUrl.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  socketUrl.searchParams.set('token', access);
-  const ws = new WebSocket(socketUrl.toString());
-  ws.onmessage = e => { try { onMessage(JSON.parse(e.data)); } catch {} };
-  return ws;
+  const unsubscribe = subscribeToOrders(onMessage);
+  return { close: unsubscribe };
 }

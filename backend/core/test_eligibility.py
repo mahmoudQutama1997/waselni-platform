@@ -457,13 +457,32 @@ class DispatchTests(TestCase):
     def test_assign_succeeds_once_and_second_captain_gets_409(self):
         order = make_order()
         self.client.force_authenticate(self.user)
-        self.assertEqual(self.client.post(f"/api/orders/{order.id}/assign/").status_code, 200)
+        payload = {"accepted_delivery_fee": str(order.delivery_fee)}
+        self.assertEqual(self.client.post(f"/api/orders/{order.id}/assign/", payload, format="json").status_code, 200)
         order.refresh_from_db()
         self.assertEqual(order.status, "assigned")
         self.assertEqual(order.captain_id, self.profile.id)
         second, _ = make_captain("second", online=True)
         self.client.force_authenticate(second)
-        self.assertEqual(self.client.post(f"/api/orders/{order.id}/assign/").status_code, 409)
+        self.assertEqual(self.client.post(f"/api/orders/{order.id}/assign/", payload, format="json").status_code, 409)
+
+    def test_own_assigned_order_stays_visible_when_offline(self):
+        order = make_order()
+        self.client.force_authenticate(self.user)
+        self.client.post(f"/api/orders/{order.id}/assign/", {"accepted_delivery_fee": str(order.delivery_fee)}, format="json")
+        self.profile.online = False
+        self.profile.save()
+        self.assertEqual(self.available_ids(), [order.id])
+
+    def test_ride_captain_workflow_needs_no_merchant_arrival(self):
+        ride = make_order(order_type="ride", status="new", required_vehicle="motorcycle")
+        self.client.force_authenticate(self.user)
+        self.client.post(f"/api/orders/{ride.id}/assign/", {"accepted_delivery_fee": str(ride.delivery_fee)}, format="json")
+        for status in ("picked_up", "delivering", "completed"):
+            r = self.client.post(f"/api/orders/{ride.id}/status/", {"status": status}, format="json")
+            self.assertEqual(r.status_code, 200, status)
+        ride.refresh_from_db()
+        self.assertEqual(ride.status, "completed")
 
     def test_assign_blocked_for_expired_subscription_offline_pending_and_suspended(self):
         order = make_order()
@@ -474,7 +493,7 @@ class DispatchTests(TestCase):
         for name, kwargs, reason in cases:
             user, profile = make_captain("a-" + name, **kwargs)
             self.client.force_authenticate(user)
-            r = self.client.post(f"/api/orders/{order.id}/assign/")
+            r = self.client.post(f"/api/orders/{order.id}/assign/", {"accepted_delivery_fee": str(order.delivery_fee)}, format="json")
             self.assertIn(r.status_code, (401, 403), name)
             if r.status_code == 403 and isinstance(r.data, dict) and "reason" in r.data:
                 self.assertEqual(r.data["reason"], reason, name)
@@ -485,10 +504,10 @@ class DispatchTests(TestCase):
         wrong_vehicle = make_order(required_vehicle="car")
         needs_checkpoint = make_order(requires_checkpoint=True)
         self.client.force_authenticate(self.user)
-        r1 = self.client.post(f"/api/orders/{wrong_vehicle.id}/assign/")
+        r1 = self.client.post(f"/api/orders/{wrong_vehicle.id}/assign/", {"accepted_delivery_fee": str(wrong_vehicle.delivery_fee)}, format="json")
         self.assertEqual(r1.status_code, 403)
         self.assertEqual(r1.data["reason"], "vehicle_mismatch")
-        r2 = self.client.post(f"/api/orders/{needs_checkpoint.id}/assign/")
+        r2 = self.client.post(f"/api/orders/{needs_checkpoint.id}/assign/", {"accepted_delivery_fee": str(needs_checkpoint.delivery_fee)}, format="json")
         self.assertEqual(r2.status_code, 403)
         self.assertEqual(r2.data["reason"], "checkpoint_required")
 

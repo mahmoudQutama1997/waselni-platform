@@ -65,11 +65,28 @@ TEMPLATES = [{
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+if not REDIS_URL:
+    # Render's Blueprint only exposes host/port for Key Value instances.
+    REDIS_HOST = os.getenv("REDIS_HOST", "").strip()
+    if REDIS_HOST:
+        REDIS_URL = f"redis://{REDIS_HOST}:{os.getenv('REDIS_PORT', '6379').strip() or '6379'}"
+
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [REDIS_URL]},
+        }
     }
-}
+else:
+    # In-memory channels only reach clients connected to this single process.
+    # Set REDIS_URL in production so WebSocket events cross workers/instances.
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer"
+        }
+    }
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -127,10 +144,16 @@ CORS_ALLOW_HEADERS = [
     "idempotency-key",
 ]
 
+# Legacy preview deployments remain allowed by default; add new origins through
+# CORS_ALLOWED_ORIGIN_REGEXES (comma-separated regexes) without editing code.
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://waselni-customer1-[a-z0-9-]+-mahmoud13\.vercel\.app$",
     r"^https://waselni-merchan-[a-z0-9-]+-mahmoud13\.vercel\.app$",
     r"^https://waselni-platform-5xd8-[a-z0-9-]+-mahmoud13\.vercel\.app$",
+] + [
+    x.strip()
+    for x in os.getenv("CORS_ALLOWED_ORIGIN_REGEXES", "").split(",")
+    if x.strip()
 ]
 
 REST_FRAMEWORK = {
@@ -178,3 +201,15 @@ SECURE_PROXY_SSL_HEADER = (
     "HTTP_X_FORWARDED_PROTO",
     "https"
 )
+
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+
+# Django itself rejects request bodies larger than this; the per-file validators
+# in core.validators enforce the tighter image/document limits.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("DATA_UPLOAD_MAX_MEMORY_SIZE", str(12 * 1024 * 1024)))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("FILE_UPLOAD_MAX_MEMORY_SIZE", str(5 * 1024 * 1024)))
+
+# Serve uploaded media through Django when no external object storage / web
+# server is in front. Enabled automatically in DEBUG, opt-in in production.
+SERVE_MEDIA = os.getenv("SERVE_MEDIA", str(DEBUG)).lower() == "true"
