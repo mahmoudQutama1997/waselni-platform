@@ -135,7 +135,7 @@ The frontend language selector now applies Arabic, Hebrew, and English translati
 
 The React admin control center includes live summary cards and operational sections for accounts, subscriptions and payments, captains, merchants, orders, and support tickets. Subscription state is calculated once by the backend helper and shared by the admin ledger, captain API, and dispatch checks. Admin actions include approving/revoking captain approval, opening/closing a merchant, and changing support-ticket status. These actions use the authenticated endpoint `GET/PATCH /api/admin/operations/` and require a user whose role is `admin`.
 
-The operations map remains a clearly marked placeholder until a real maps provider and API key are configured. Frontend production builds are available through `npm run build:all-portals`.
+The admin operations map renders live store, active-order and captain positions with Leaflet using the configured tile provider; it is no longer a placeholder. Frontend production builds are available through `npm run build:all-portals`.
 
 
 ## Central account and monthly subscription management
@@ -227,7 +227,7 @@ Platform administrators can create captains directly from the purple Waselni adm
 
 No database schema changes were made; no migration is required. Existing account approval and payment records are not automatically altered. After deploying, compare the `user_id`/`username` shown on the captain page with the matching row in Admin > Captain Management. Do not manually mark a subscription paid or approved unless the underlying administrative record is correct.
 
-Validation performed for this patch: Python source compilation passed. Django tests and the Vite production build could not be run in this environment because dependencies were not installed and package-index access was unavailable. Run `python manage.py test core` in the backend virtual environment and `npm install && npm run build` in `frontend` after extracting the project.
+Validation performed for this patch: the full backend suite (82 tests), Django checks, TypeScript check and all four role builds pass on the current source; see `QA_REPORT.md` for the final results matrix.
 
 
 ## Latest workflow update
