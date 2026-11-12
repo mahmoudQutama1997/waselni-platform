@@ -258,3 +258,5 @@ class CashSettlementAfterDeliveryTests(TestCase):
         self.assertEqual(missing.status_code, 400)
         wrong = client.post(f"/api/orders/{order.id}/assign/", {"accepted_delivery_fee": "18.00"}, format="json")
         self.assertEqual(wrong.status_code, 409)
+        invalid = client.post(f"/api/orders/{order.id}/assign/", {"accepted_delivery_fee": "not-a-number"}, format="json")
+        self.assertEqual(invalid.status_code, 400)

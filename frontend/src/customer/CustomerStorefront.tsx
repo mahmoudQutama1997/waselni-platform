@@ -1,10 +1,13 @@
 import L from '../map/leaflet';
+import { createTileLayer } from '../map/tiles';
+import { mapMarker } from '../map/markers';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api, mediaUrl } from '../api';
+import { api } from '../api';
+import SafeImage from '../components/SafeImage';
 import type { CartLine, Merchant, Order, Product } from './types';
-import { MAP_TILE_URL, MAP_ATTRIBUTION, GEOCODING_REVERSE_URL, GEOCODING_SEARCH_URL, geocodeUrl } from '../config';
+import { GEOCODING_REVERSE_URL, GEOCODING_SEARCH_URL, geocodeUrl } from '../config';
 
 type Props = { lang: 'ar' | 'en' | 'he' };
 
@@ -49,6 +52,18 @@ type Copy = {
   customerLocation: string;
   selectLocation: string;
   useLocation: string;
+  browseCategories: string;
+  viewCart: string;
+  orderStatus: string;
+  noOrders: string;
+  closedHint: string;
+  results: string;
+  searchAddress: string;
+  searchAction: string;
+  searching: string;
+  addressNotFound: string;
+  locationDenied: string;
+  locationUnsupported: string;
 };
 
 const copy: Record<Props['lang'], Copy> = {
@@ -87,7 +102,19 @@ const copy: Record<Props['lang'], Copy> = {
     orderError: 'تعذر إنشاء الطلب. حاول مرة أخرى.',
     chooseStore: 'اختر متجراً أولاً.',
     clearCart: 'إفراغ السلة',
-    deliveryFeeNote: 'حدد أجرة التوصيل التي تعرض على الكابتن؛ لا تُثبت إلا بعد موافقته.', deliveryFee: 'أجرة التوصيل المقترحة (₪)', storeLocation: 'موقع المتجر', customerLocation: 'حدد موقع استلام الطلب على الخريطة', selectLocation: 'اضغط على الخريطة لتحديد موقعك أو ابحث عن عنوانك.', useLocation: 'استخدم موقعي الحالي'
+    deliveryFeeNote: 'حدد أجرة التوصيل التي تعرض على الكابتن؛ لا تُثبت إلا بعد موافقته.', deliveryFee: 'أجرة التوصيل المقترحة (₪)', storeLocation: 'موقع المتجر', customerLocation: 'حدد موقع استلام الطلب على الخريطة', selectLocation: 'اضغط على الخريطة لتحديد موقعك أو ابحث عن عنوانك.', useLocation: 'استخدم موقعي الحالي',
+    browseCategories: 'تصفح التصنيفات',
+    viewCart: 'عرض السلة',
+    orderStatus: 'حالة الطلب',
+    noOrders: 'لا توجد طلبات سابقة بعد.',
+    closedHint: 'هذا المتجر مغلق حالياً، يمكنك التصفح لكن الطلب قد يتأخر.',
+    results: 'نتيجة',
+    searchAddress: 'ابحث عن المدينة أو الشارع',
+    searchAction: 'بحث',
+    searching: 'جارٍ البحث...',
+    addressNotFound: 'لم يتم العثور على العنوان',
+    locationDenied: 'اسمح بالوصول إلى الموقع من المتصفح',
+    locationUnsupported: 'المتصفح لا يدعم تحديد الموقع'
   },
 
   en: {
@@ -125,7 +152,19 @@ const copy: Record<Props['lang'], Copy> = {
     orderError: 'Failed to place the order. Please try again.',
     chooseStore: 'Choose a store first.',
     clearCart: 'Clear cart',
-    deliveryFeeNote: 'Set your proposed delivery fee. It becomes final only after a captain accepts it.', deliveryFee: 'Proposed delivery fee (₪)', storeLocation: 'Store location', customerLocation: 'Choose your delivery location on the map', selectLocation: 'Click the map to set your location or search for an address.', useLocation: 'Use my current location'
+    deliveryFeeNote: 'Set your proposed delivery fee. It becomes final only after a captain accepts it.', deliveryFee: 'Proposed delivery fee (₪)', storeLocation: 'Store location', customerLocation: 'Choose your delivery location on the map', selectLocation: 'Click the map to set your location or search for an address.', useLocation: 'Use my current location',
+    browseCategories: 'Browse categories',
+    viewCart: 'View cart',
+    orderStatus: 'Order status',
+    noOrders: 'No previous orders yet.',
+    closedHint: 'This store is currently closed. You can browse, but the order may be delayed.',
+    results: 'results',
+    searchAddress: 'Search for a city or street',
+    searchAction: 'Search',
+    searching: 'Searching...',
+    addressNotFound: 'Address not found',
+    locationDenied: 'Allow location access from your browser',
+    locationUnsupported: 'Geolocation is not supported by this browser'
   },
 
   he: {
@@ -163,12 +202,39 @@ const copy: Record<Props['lang'], Copy> = {
     orderError: 'לא ניתן ליצור את ההזמנה. נסו שוב.',
     chooseStore: 'יש לבחור חנות תחילה.',
     clearCart: 'ריקון הסל',
-    deliveryFeeNote: 'קבעו דמי משלוח מוצעים. המחיר יאושר סופית רק לאחר שקברניט יקבל אותו.', deliveryFee: 'דמי משלוח מוצעים (₪)', storeLocation: 'מיקום החנות', customerLocation: 'בחרו את מיקום המסירה במפה', selectLocation: 'לחצו על המפה כדי לבחור מיקום או חפשו כתובת.', useLocation: 'השתמשו במיקום שלי'
+    deliveryFeeNote: 'קבעו דמי משלוח מוצעים. המחיר יאושר סופית רק לאחר שקברניט יקבל אותו.', deliveryFee: 'דמי משלוח מוצעים (₪)', storeLocation: 'מיקום החנות', customerLocation: 'בחרו את מיקום המסירה במפה', selectLocation: 'לחצו על המפה כדי לבחור מיקום או חפשו כתובת.', useLocation: 'השתמשו במיקום שלי',
+    browseCategories: 'עיון בקטגוריות',
+    viewCart: 'לצפייה בסל',
+    orderStatus: 'מצב הזמנה',
+    noOrders: 'אין עדיין הזמנות קודמות.',
+    closedHint: 'החנות סגורה כעת. אפשר לעיין, אך ייתכן עיכוב בהזמנה.',
+    results: 'תוצאות',
+    searchAddress: 'חיפוש עיר או רחוב',
+    searchAction: 'חיפוש',
+    searching: 'מחפש...',
+    addressNotFound: 'הכתובת לא נמצאה',
+    locationDenied: 'יש לאשר גישה למיקום בדפדפן',
+    locationUnsupported: 'הדפדפן אינו תומך באיתור מיקום'
   }
+};
+
+const ORDER_STATUS: Record<Props['lang'], Record<string, string>> = {
+  ar: { new: 'جديد', accepted: 'مقبول', preparing: 'قيد التجهيز', ready: 'جاهز', assigned: 'تم تعيين كابتن', picked_up: 'تم الاستلام', delivering: 'قيد التوصيل', completed: 'مكتمل', cancelled: 'ملغي' },
+  en: { new: 'New', accepted: 'Accepted', preparing: 'Preparing', ready: 'Ready', assigned: 'Captain assigned', picked_up: 'Picked up', delivering: 'Delivering', completed: 'Completed', cancelled: 'Cancelled' },
+  he: { new: 'חדש', accepted: 'אושר', preparing: 'בהכנה', ready: 'מוכן', assigned: 'שליח שובץ', picked_up: 'נאסף', delivering: 'במשלוח', completed: 'הושלם', cancelled: 'בוטל' }
 };
 
 const money = (value: string | number) =>
   `${Number(value || 0).toFixed(2)} ₪`;
+
+const statusTone = (status: string) =>
+  status === 'cancelled'
+    ? 'is-cancelled'
+    : status === 'completed'
+      ? 'is-done'
+      : status === 'new'
+        ? 'is-new'
+        : 'is-live';
 
 const readCart = (): CartLine[] => {
   try {
@@ -192,10 +258,11 @@ function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { m
   const storeMarker = useRef<any>(null);
   const [query, setQuery] = useState('');
   const [mapError, setMapError] = useState('');
+  const [searching, setSearching] = useState(false);
   useEffect(() => {
     if (!L || !mapRef.current || mapInstance.current) return;
     const map = L.map(mapRef.current, { scrollWheelZoom: false }).setView([31.95, 35.21], 12);
-    L.tileLayer(MAP_TILE_URL, { maxZoom: 19, attribution: MAP_ATTRIBUTION }).addTo(map);
+    createTileLayer({ maxZoom: 19 }).addTo(map);
     map.on('click', (event: any) => select(event.latlng.lat, event.latlng.lng));
     mapInstance.current = map;
     const timer = window.setTimeout(() => map.invalidateSize(), 180);
@@ -215,7 +282,7 @@ if (!map) return;
     if (latitude != null && longitude != null) {
       const point = [latitude, longitude];
       if (customerMarker.current) customerMarker.current.setLatLng(point);
-      else customerMarker.current = L.marker(point, { draggable: true }).addTo(map).bindPopup(t.customerLocation);
+      else customerMarker.current = L.marker(point, { draggable: true, icon: mapMarker('customer') }).addTo(map).bindPopup(t.customerLocation);
       customerMarker.current.off('dragend').on('dragend', (event: any) => { const p = event.target.getLatLng(); select(p.lat, p.lng); });
     } else if (customerMarker.current) { map.removeLayer(customerMarker.current); customerMarker.current = null; }
     const points: number[][] = [];
@@ -231,22 +298,24 @@ if (!map) return;
       if (response.ok) { const data = await response.json(); if (data.display_name) onSelect(lat, lng, data.display_name); }
     } catch { /* Coordinates remain usable if reverse geocoding is unavailable. */ }
   }
-  async function search() {
-    if (!query.trim()) return;
+  async function search(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault(); if (!query.trim() || searching) return;
+    setSearching(true);
     try {
       setMapError('');
       const response = await fetch(geocodeUrl(GEOCODING_SEARCH_URL, { format: 'jsonv2', limit: 1, q: query }));
-      if (!response.ok) throw new Error('تعذر البحث عن العنوان');
-      const results = await response.json(); if (!results.length) throw new Error('لم يتم العثور على العنوان');
+      if (!response.ok) throw new Error(t.addressNotFound);
+      const results = await response.json(); if (!results.length) throw new Error(t.addressNotFound);
       const lat = Number(results[0].lat), lng = Number(results[0].lon);
       onSelect(lat, lng, results[0].display_name || query); mapInstance.current?.setView([lat, lng], 16);
-    } catch (error) { setMapError(error instanceof Error ? error.message : 'تعذر تحديد الموقع'); }
+    } catch (error) { setMapError(error instanceof Error ? error.message : t.addressNotFound); }
+    finally { setSearching(false); }
   }
   function locate() {
-    if (!navigator.geolocation) { setMapError('المتصفح لا يدعم تحديد الموقع'); return; }
-    navigator.geolocation.getCurrentPosition(position => { const { latitude: lat, longitude: lng } = position.coords; select(lat, lng); mapInstance.current?.setView([lat, lng], 16); setMapError(''); }, () => setMapError('اسمح بالوصول إلى الموقع من المتصفح'), { enableHighAccuracy: true, timeout: 12000 });
+    if (!navigator.geolocation) { setMapError(t.locationUnsupported); return; }
+    navigator.geolocation.getCurrentPosition(position => { const { latitude: lat, longitude: lng } = position.coords; select(lat, lng); mapInstance.current?.setView([lat, lng], 16); setMapError(''); }, () => setMapError(t.locationDenied), { enableHighAccuracy: true, timeout: 12000 });
   }
-  return <div className="checkout-location-wrap"><div className="checkout-location-tools"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(); } }} placeholder="ابحث عن المدينة أو الشارع"/><button type="button" onClick={() => search()}>بحث</button><button type="button" className="secondary" onClick={locate}>{t.useLocation}</button></div><div ref={mapRef} className="checkout-location-map"/><p className="muted-note">{t.selectLocation} {merchant ? `${t.storeLocation}: ${merchant.shop_name}` : ''}</p><div className="checkout-map-legend"><span><i className="checkout-store-dot"/> {t.storeLocation}</span><span><i className="checkout-customer-dot"/> {t.customerLocation}</span></div>{latitude != null && longitude != null && <small>{latitude.toFixed(6)}, {longitude.toFixed(6)}</small>}{mapError && <p className="error">{mapError}</p>}</div>;
+  return <div className="checkout-location-wrap"><div className="checkout-location-tools"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(); } }} placeholder={t.searchAddress}/><button type="button" disabled={searching} onClick={() => search()}>{searching ? t.searching : t.searchAction}</button><button type="button" className="secondary" onClick={locate}>{t.useLocation}</button></div><div ref={mapRef} className="checkout-location-map"/><p className="muted-note">{t.selectLocation} {merchant ? `${t.storeLocation}: ${merchant.shop_name}` : ''}</p><div className="checkout-map-legend"><span><i className="checkout-store-dot"/> {t.storeLocation}</span><span><i className="checkout-customer-dot"/> {t.customerLocation}</span></div>{latitude != null && longitude != null && <small dir="ltr">{latitude.toFixed(6)}, {longitude.toFixed(6)}</small>}{mapError && <p className="error">{mapError}</p>}</div>;
 }
 
 export default function CustomerStorefront({ lang }: Props) {
@@ -259,6 +328,9 @@ export default function CustomerStorefront({ lang }: Props) {
   const [selectedMerchant, setSelectedMerchant] = useState<number | null>(null);
   const [cart, setCart] = useState<CartLine[]>(readCart);
   const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('');
+  const [addedId, setAddedId] = useState<number | null>(null);
+  const cartPanelRef = useRef<HTMLElement | null>(null);
   const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [dropoffLat, setDropoffLat] = useState<number | null>(null);
@@ -340,13 +412,26 @@ export default function CustomerStorefront({ lang }: Props) {
 
   const filteredMerchants = useMemo(
     () =>
-      merchants.filter(m =>
-        `${m.shop_name} ${m.category || ''}`
+      merchants.filter(m => {
+        const matchesSearch = `${m.shop_name} ${m.category || ''}`
           .toLowerCase()
-          .includes(search.toLowerCase())
-      ),
-    [merchants, search]
+          .includes(search.toLowerCase());
+        const matchesCategory = !category || m.category === category;
+        return matchesSearch && matchesCategory;
+      }),
+    [merchants, search, category]
   );
+
+  const categories = useMemo(() => {
+    const counts = new Map<string, number>();
+    merchants.forEach(m => {
+      const label = (m.category || '').trim();
+      if (label) counts.set(label, (counts.get(label) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8);
+  }, [merchants]);
 
   const filteredProducts = useMemo(
     () =>
@@ -380,6 +465,8 @@ export default function CustomerStorefront({ lang }: Props) {
 
     setError('');
     setNotice(t.added);
+    setAddedId(product.id);
+    window.setTimeout(() => setAddedId(current => (current === product.id ? null : current)), 1400);
 
     setCart(current => {
       const found = current.find(
@@ -509,8 +596,42 @@ export default function CustomerStorefront({ lang }: Props) {
               </span>
             </div>
 
+            {categories.length > 0 && (
+              <div className="customer-v2-categories" aria-label={t.browseCategories}>
+                <button
+                  type="button"
+                  className={`customer-v2-category ${!category ? 'is-active' : ''}`}
+                  onClick={() => setCategory('')}
+                  aria-pressed={!category}
+                >
+                  {t.all} <b>{merchants.length}</b>
+                </button>
+                {categories.map(([label, count]) => (
+                  <button
+                    type="button"
+                    key={label}
+                    className={`customer-v2-category ${category === label ? 'is-active' : ''}`}
+                    onClick={() => setCategory(current => (current === label ? '' : label))}
+                    aria-pressed={category === label}
+                  >
+                    {label} <b>{count}</b>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {loadingStores ? (
-              <div className="customer-v2-loading">{t.loading}</div>
+              <div className="customer-v2-stores" aria-busy="true" aria-label={t.loading}>
+                {[0, 1, 2, 3].map(i => (
+                  <div className="customer-v2-skeleton-store" key={i}>
+                    <span className="skeleton sk-avatar" />
+                    <span className="sk-block">
+                      <span className="skeleton sk-line w-80" />
+                      <span className="skeleton sk-line w-40" />
+                    </span>
+                  </div>
+                ))}
+              </div>
             ) : filteredMerchants.length ? (
               <div className="customer-v2-stores">
                 {filteredMerchants.map(merchant => (
@@ -529,7 +650,7 @@ export default function CustomerStorefront({ lang }: Props) {
                   >
                     <span className="customer-v2-store-image">
                       {merchant.image ? (
-                        <img src={mediaUrl(merchant.image)} alt="" />
+                        <SafeImage src={merchant.image} alt={merchant.shop_name} />
                       ) : (
                         <span>◈</span>
                       )}
@@ -549,10 +670,11 @@ export default function CustomerStorefront({ lang }: Props) {
               </div>
             ) : (
               <p className="customer-v2-empty">
-                {search ? t.searchEmpty : t.noStores}
+                {search || category ? t.searchEmpty : t.noStores}
               </p>
             )}
-            {activeMerchant && <div className="customer-v2-store-location"><b>{t.storeLocation}: {activeMerchant.shop_name}</b><small>{activeMerchant.address || '—'}</small>{activeMerchant.latitude == null || activeMerchant.longitude == null ? <p className="customer-v2-fee-note">المتجر لم يحدد موقعه على الخريطة بعد؛ لا يمكن إرسال طلب توصيل إليه.</p> : <a target="_blank" rel="noreferrer" href={`https://www.openstreetmap.org/?mlat=${activeMerchant.latitude}&mlon=${activeMerchant.longitude}#map=16/${activeMerchant.latitude}/${activeMerchant.longitude}`}>عرض موقع المتجر على الخريطة</a>}</div>}
+            {activeMerchant && <div className="customer-v2-store-location"><b>{t.storeLocation}: {activeMerchant.shop_name}</b><small>{activeMerchant.address || '—'}</small>{activeMerchant.latitude == null || activeMerchant.longitude == null ? <p className="customer-v2-fee-note">{lang === 'ar' ? 'المتجر لم يحدد موقعه على الخريطة بعد؛ لا يمكن إرسال طلب توصيل إليه.' : lang === 'he' ? 'החנות טרם סימנה את מיקומה במפה; לא ניתן לשלוח אליה הזמנת משלוח.' : 'The store has not set its map location yet, so delivery orders cannot be sent to it.'}</p> : <a target="_blank" rel="noreferrer" href={`https://www.openstreetmap.org/?mlat=${activeMerchant.latitude}&mlon=${activeMerchant.longitude}#map=16/${activeMerchant.latitude}/${activeMerchant.longitude}`}>{lang === 'ar' ? 'عرض موقع المتجر على الخريطة' : lang === 'he' ? 'הצגת מיקום החנות במפה' : 'View store location on the map'}</a>}</div>}
+            {activeMerchant && !activeMerchant.is_open && <p className="customer-v2-feedback is-error">{t.closedHint}</p>}
           </section>
 
           <section className="customer-v2-section">
@@ -570,7 +692,18 @@ export default function CustomerStorefront({ lang }: Props) {
                 <p>{t.storeHint}</p>
               </div>
             ) : loadingProducts ? (
-              <div className="customer-v2-loading">{t.loading}</div>
+              <div className="customer-v2-products" aria-busy="true" aria-label={t.loading}>
+                {[0, 1, 2].map(i => (
+                  <div className="customer-v2-skeleton-product" key={i}>
+                    <span className="skeleton" />
+                    <div>
+                      <span className="skeleton sk-line w-40" />
+                      <span className="skeleton sk-line w-80" />
+                      <span className="skeleton sk-line w-60" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : filteredProducts.length ? (
               <div className="customer-v2-products">
                 {filteredProducts.map(product => (
@@ -580,10 +713,9 @@ export default function CustomerStorefront({ lang }: Props) {
                   >
                     <div className="customer-v2-product-image">
                       {product.image ? (
-                        <img
-                          src={mediaUrl(product.image)}
+                        <SafeImage
+                          src={product.image}
                           alt={product.name}
-                          loading="lazy"
                         />
                       ) : (
                         <span>◫</span>
@@ -602,8 +734,12 @@ export default function CustomerStorefront({ lang }: Props) {
 
                       <div className="customer-v2-product-footer">
                         <b>{money(product.price)}</b>
-                        <button onClick={() => addProduct(product)}>
-                          {t.add} <span>＋</span>
+                        <button
+                          className={addedId === product.id ? 'is-added' : ''}
+                          onClick={() => addProduct(product)}
+                        >
+                          {addedId === product.id ? t.added : t.add}
+                          <span>{addedId === product.id ? '✓' : '＋'}</span>
                         </button>
                       </div>
                     </div>
@@ -611,7 +747,9 @@ export default function CustomerStorefront({ lang }: Props) {
                 ))}
               </div>
             ) : (
-              <p className="customer-v2-empty">{t.noProducts}</p>
+              <p className="customer-v2-empty">
+                {search ? t.searchEmpty : t.noProducts}
+              </p>
             )}
           </section>
 
@@ -633,21 +771,30 @@ export default function CustomerStorefront({ lang }: Props) {
                         #{order.id} · {order.merchant_name || 'WASELNI'}
                       </b>
                       <small>
-                        {order.dropoff_address || order.status}
+                        {order.dropoff_address || t.orderStatus}
                       </small>
                     </div>
+                    <span className={`customer-v2-order-status ${statusTone(order.status)}`}>
+                      {ORDER_STATUS[lang][order.status] || order.status}
+                    </span>
                     <strong>{money(order.total)}</strong>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="customer-v2-empty">—</p>
+              <p className="customer-v2-empty">{t.noOrders}</p>
             )}
-            <Link className="customer-v2-track-link" to="/orders">عرض حالة الطلبات وتتبع الكابتن على الخريطة ←</Link>
+            <Link className="customer-v2-track-link" to="/orders">
+              {lang === 'ar'
+                ? 'عرض حالة الطلبات وتتبع الكابتن على الخريطة ←'
+                : lang === 'he'
+                  ? 'לצפייה במצב ההזמנות ומעקב השליח במפה ←'
+                  : 'View order status and track the captain on the map ←'}
+            </Link>
           </section>
         </main>
 
-        <aside className="customer-v2-cart-panel">
+        <aside className="customer-v2-cart-panel" ref={cartPanelRef} id="customer-cart">
           <div className="customer-v2-cart-title">
             <div>
               <span className="customer-v2-eyebrow">YOUR ORDER</span>
@@ -795,6 +942,18 @@ export default function CustomerStorefront({ lang }: Props) {
             </p>
           )}
         </aside>
+
+        {cartCount > 0 && (
+          <button
+            type="button"
+            className="customer-v2-cart-fab"
+            onClick={() => cartPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            <span aria-hidden="true">🛍</span>
+            {t.viewCart}
+            <b>{cartCount}</b>
+          </button>
+        )}
       </div>
     </div>
   );

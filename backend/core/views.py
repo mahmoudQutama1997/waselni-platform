@@ -164,6 +164,41 @@ class MeView(APIView):
         return Response(UserSerializer(request.user, context={"request": request}).data)
 
 
+STADIA_ROLE_ENV = {
+    "customer": "STADIA_KEY_CUSTOMER",
+    "captain": "STADIA_KEY_CAPTAIN",
+    "merchant": "STADIA_KEY_MERCHANT",
+}
+
+
+class MapConfigView(APIView):
+    """Serve the Stadia key that belongs to the authenticated account role.
+
+    The role is read from the database user, never from request data. Admin
+    accounts have no native app key. The response must never be cached or logged.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        env_name = STADIA_ROLE_ENV.get(request.user.role)
+        if not env_name:
+            raise PermissionDenied("No native map key is available for this account.")
+        api_key = os.getenv(env_name, "").strip()
+        if not api_key:
+            return Response({"detail": "Map service is not configured."}, status=503)
+        response = Response({
+            "provider": "stadia",
+            "role": request.user.role,
+            "api_key": api_key,
+            "tile_url": "https://tiles.stadiamaps.com/tiles/alidade_bright/{z}/{x}/{y}{r}.png",
+            "attribution": "&copy; Stadia Maps &copy; OpenStreetMap contributors",
+        })
+        response["Cache-Control"] = "no-store"
+        response["Pragma"] = "no-cache"
+        return response
+
+
 class HealthView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []

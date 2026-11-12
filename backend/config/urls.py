@@ -6,7 +6,7 @@ from django.urls import path, include, re_path
 from django.conf import settings
 from django.views.static import serve
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from core.views import RegisterView, MeView, HealthView, CaptainDocumentView
+from core.views import RegisterView, MeView, HealthView, CaptainDocumentView, MapConfigView
 
 CAPTAIN_DOCUMENTS_PREFIX = "captain_documents"
 
@@ -64,6 +64,7 @@ urlpatterns = [
     path("api/auth/token/", TokenObtainPairView.as_view()),
     path("api/auth/token/refresh/", TokenRefreshView.as_view()),
     path("api/me/", MeView.as_view()),
+    path("api/map/config/", MapConfigView.as_view()),
     path("api/captain-documents/<int:profile_id>/<str:field>/", CaptainDocumentView.as_view()),
     path("api/", include("core.urls")),
     re_path(r"^media/(?P<path>.*)$", serve_media),

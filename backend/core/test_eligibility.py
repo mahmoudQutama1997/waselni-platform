@@ -500,6 +500,24 @@ class DispatchTests(TestCase):
         order.refresh_from_db()
         self.assertIsNone(order.captain_id)
 
+    def test_assign_requires_exact_delivery_fee(self):
+        order = make_order(delivery_fee=Decimal("7.50"))
+        self.client.force_authenticate(self.user)
+        missing = self.client.post(f"/api/orders/{order.id}/assign/", {}, format="json")
+        self.assertEqual(missing.status_code, 400)
+        invalid = self.client.post(f"/api/orders/{order.id}/assign/",
+                                   {"accepted_delivery_fee": "not-a-number"}, format="json")
+        self.assertEqual(invalid.status_code, 400)
+        wrong = self.client.post(f"/api/orders/{order.id}/assign/",
+                                 {"accepted_delivery_fee": "7.00"}, format="json")
+        self.assertEqual(wrong.status_code, 409)
+        accepted = self.client.post(f"/api/orders/{order.id}/assign/",
+                                    {"accepted_delivery_fee": "7.50"}, format="json")
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        order.refresh_from_db()
+        self.assertEqual(order.status, "assigned")
+        self.assertEqual(order.captain_id, self.profile.id)
+
     def test_assign_blocked_for_vehicle_and_checkpoint_mismatch(self):
         wrong_vehicle = make_order(required_vehicle="car")
         needs_checkpoint = make_order(requires_checkpoint=True)

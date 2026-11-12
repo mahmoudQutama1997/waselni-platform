@@ -1,18 +1,40 @@
 import { subscribeToOrders } from './realtime/orders.js';
+import { isNativePlatform } from './platform';
 
 // Keep API requests same-origin by default. Vite proxies /api and /ws to Django,
 // so the app also works when opened from another device on the same network.
 const configuredBase = (import.meta.env.VITE_API_URL || '/api').trim();
-export const API_BASE = configuredBase.replace(/\/+$/, '');
+export const API_BASE = configuredBase.replace(/\/+$/, '') || '/api';
+
+function apiOrigin(){
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(API_BASE) ? new URL(API_BASE).origin : window.location.origin;
+}
+
+function assertNativeApiBase(){
+  if (isNativePlatform() && !/^[a-z][a-z0-9+.-]*:\/\//i.test(API_BASE)) {
+    throw new Error('VITE_API_URL must be an absolute URL (for example https://api.example.com/api) in native builds.');
+  }
+}
 
 /** Resolve Django media URLs against the backend host, not the Vercel app host. */
 export function mediaUrl(value){
   if (!value || typeof value !== 'string') return '';
   const raw = value.trim();
   if (!raw) return '';
-  if (/^(data:|blob:|https?:\/\/|\/\/)/i.test(raw)) return raw;
-  const apiOrigin = API_BASE.startsWith('http') ? new URL(API_BASE).origin : window.location.origin;
-  return new URL(raw.startsWith('/') ? raw : `/${raw}`, `${apiOrigin}/`).toString();
+  if (/^(data:|blob:|\/\/)/i.test(raw)) return raw;
+  try {
+    const url = /^https?:/i.test(raw)
+      ? new URL(raw)
+      : new URL(raw.startsWith('/') ? raw : `/${raw}`, `${apiOrigin()}/`);
+    // A backend behind a proxy can still emit http:// links; never let those
+    // become mixed content on an HTTPS portal. Local development stays intact.
+    if (window.location.protocol === 'https:' && url.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(url.hostname)) {
+      url.protocol = 'https:';
+    }
+    return url.toString();
+  } catch {
+    return raw;
+  }
 }
 
 export function token(){ return localStorage.getItem('waselni_access'); }
@@ -59,6 +81,7 @@ async function refreshAccess(){
 }
 
 export async function api(path, options={}, retried=false){
+  assertNativeApiBase();
   const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers = { ...(isForm ? {} : options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) };
   if (token()) headers.Authorization = `Bearer ${token()}`;
@@ -66,7 +89,7 @@ export async function api(path, options={}, retried=false){
   try {
     res = await fetch(`${API_BASE}${path.startsWith('/') ? path : `/${path}`}`, { ...options, headers });
   } catch (err) {
-    const target = API_BASE.startsWith('http') ? API_BASE : `${window.location.origin}${API_BASE}`;
+    const target = API_BASE.startsWith('http') ? API_BASE : `${apiOrigin()}${API_BASE}`;
     throw new Error(`تعذر الاتصال بالخادم (${target}). تأكد أن Django يعمل وأن إعدادات Vite proxy صحيحة. التفاصيل: ${err?.message || 'Network error'}`);
   }
   if (res.status === 401 && !retried && !path.includes('/auth/token')) {
@@ -87,6 +110,7 @@ export async function login(username,password){
 }
 
 export function orderSocket(onMessage){
+  assertNativeApiBase();
   const unsubscribe = subscribeToOrders(onMessage);
   return { close: unsubscribe };
 }

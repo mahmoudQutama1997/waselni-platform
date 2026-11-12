@@ -11,7 +11,8 @@
     "open:ios": "npx cap open ios"
   },
   "dependencies": {
-    "@capacitor/core": "^7.4.3"
+    "@capacitor/core": "^7.4.3",
+    "capacitor-secure-storage-plugin": "0.11.0"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.4.3",
