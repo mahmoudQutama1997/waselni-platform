@@ -122,7 +122,10 @@ Earlier QA fixes retained in this change set: nested checkout `<form>` console e
 
 ## 7. Repository state
 
-- Changes were tested locally and committed to this repository only.
-- **No remote is configured in this working copy, so nothing was pushed and GitHub was not updated.**
-- No force-push, deployment or production setting was changed.
+- Source is pushed to GitHub `main`: `https://github.com/mahmoudQutama1997/waselni-platform`.
+- Pushed source commit: `d43c8a6`. The merge commit `0250c62` keeps the pre-existing GitHub history (`b147c6c`) as an ancestor alongside the completed PWA work (`be326c2`); `origin/main` was verified to resolve to `d43c8a6`.
+- No force-push was used. Two stale files from the remote side (`frontend/public/manifest.webmanifest`, `frontend/public/sw.js`) were removed because the build now generates per-role manifests/service workers under `frontend/dist/<role>/`; their history remains in the repository.
+- No `.env`, credentials, database or media files were committed — only `*.example` templates are tracked.
+- The full suite was re-run after the merge: Django check clean, no pending migrations, 82/82 backend tests OK, TypeScript check clean, all four role builds and PWA artifact validation passing.
+- Deployment was **not** executed: no hosting account or deployment token was available in this environment. `render.yaml`, `frontend/vercel.json` and `PWA_DEPLOYMENT_AND_INSTALL_AR.md` are ready for the account owner to deploy.
 - QA used a temporary SQLite database and media directory outside the repository; the Admin password reset performed for testing applied only to that isolated QA database.
