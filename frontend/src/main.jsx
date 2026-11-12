@@ -4,5 +4,6 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './style.css'
 import './tailwind.css'
-if ('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js'))
-createRoot(document.getElementById('root')).render(<BrowserRouter><App/></BrowserRouter>)
+import { registerServiceWorker } from './pwa/registerSW.js'
+registerServiceWorker()
+createRoot(document.getElementById('root')).render(<BrowserRouter><App /></BrowserRouter>)

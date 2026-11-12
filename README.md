@@ -109,16 +109,16 @@ Important: run `python manage.py createsuperuser` once to create the initial pla
 - `GET/POST /api/delay-reports/`
 - `GET/POST /api/support-tickets/`
 - `GET /api/dashboard/summary/`
-- `ws://127.0.0.1:8000/ws/orders/?token=ACCESS_TOKEN` — authenticated order events
+- `ws://127.0.0.1:8000/ws/orders/` — authenticated order events. The browser passes the JWT as the `waselni.jwt.<token>` WebSocket subprotocol; the legacy `?token=` query parameter is still accepted for older clients.
 
 ## Notes and current boundaries
 
 - SQLite is suitable for local development. For real concurrent captain dispatch, use PostgreSQL; SQLite does not provide equivalent row-level locking guarantees.
-- The in-memory Channels layer works for a single local server process. A multi-worker deployment needs Redis and `channels_redis` as the channel layer.
-- Browser WebSocket authentication uses a JWT query parameter in this MVP. Production deployments must use HTTPS/WSS and ensure access tokens are redacted from proxy/access logs.
+- The in-memory Channels layer works for a single local server process. Set `REDIS_URL` in production and the backend automatically switches to `channels_redis` for multi-worker/instance WebSocket delivery.
+- Browser WebSocket authentication uses a JWT subprotocol so the access token never appears in URLs, query strings or proxy access logs. Production deployments must still use HTTPS/WSS.
 - The dispatch filter checks online/approved status, vehicle requirement and checkpoint badge. It does not yet rank captains by live distance or ETA.
 - Captain GPS is shared while the captain is online and the captain app is open; the browser watch is foreground tracking, not guaranteed background tracking after the OS suspends the app. The order API exposes the assigned captain location only to authorized order participants and the admin dashboard.
-- Interactive maps use CARTO Voyager tiles, OpenStreetMap geocoding and OSRM road routing. Public endpoints are suitable for development/low-volume testing; production traffic should use a contracted provider or self-hosted services.
+- Map tiles, reverse geocoding and forward address search are configured with `VITE_MAP_TILE_URL`, `VITE_GEOCODING_URL` and `VITE_GEOCODING_SEARCH_URL`. Defaults point at public services suitable for development/low-volume testing; production traffic should use a licensed tile provider and address service.
 - Media URLs are resolved against the backend host so profile/store/product images load from separate Vercel portals. On Render, attach a persistent disk and set `MEDIA_ROOT=/var/data/media` to keep uploaded files across deploys; without persistent media storage, local uploaded files may be lost when the service restarts or redeploys.
 - Push notifications, SMS, VoIP, payment gateway, live map routing, audited cash handover and production monitoring still require external integrations and security review.
 - Subscription amounts are set individually by the administrator. Merchant/captain accounts require an active subscription by default; customer subscriptions can be enabled individually. Delivery and checkpoint fees remain zero until those rules are decided.
@@ -247,7 +247,9 @@ Public registration is customer-only. Merchant and captain accounts are created 
 
 ## Production configuration and remaining work
 
-The `.env.example` files contain local development settings. Before deployment, set a unique `SECRET_KEY`, `DEBUG=False`, production `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, and a production `DATABASE_URL`. With `DEBUG=False`, HTTPS redirects, secure session and CSRF cookies, and HSTS are enabled by default. Terminate HTTPS at the web server or trusted proxy, and configure the proxy to set `X-Forwarded-Proto` correctly before enabling `SECURE_PROXY_SSL_HEADER` in `backend/config/settings.py`.
+The `.env.example` files contain local development settings. Before deployment, set a unique `SECRET_KEY`, `DEBUG=False`, production `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, and a production `DATABASE_URL`. Set `REDIS_URL` for cross-instance WebSocket events and keep `SERVE_MEDIA=True` only when Django itself serves uploads. With `DEBUG=False`, HTTPS redirects, secure session and CSRF cookies, and HSTS are enabled by default. Terminate HTTPS at the web server or trusted proxy, and configure the proxy to set `X-Forwarded-Proto` correctly; `SECURE_PROXY_SSL_HEADER` is already enabled.
+
+Step-by-step PWA deployment (Render + Vercel), per-role environment values, health checks, and Arabic iPhone/Android installation instructions are in [`PWA_DEPLOYMENT_AND_INSTALL_AR.md`](PWA_DEPLOYMENT_AND_INSTALL_AR.md).
 
 The local SQLite database is not included in this source archive. Existing installations should back up their database and media before applying migrations. Do not use a fresh database setup command against an existing installation.
 

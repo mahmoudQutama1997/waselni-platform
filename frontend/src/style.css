@@ -320,3 +320,110 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
  .product-editor-grid,.merchant-picker-grid{grid-template-columns:minmax(0,1fr)}
  .section-head{align-items:flex-start;flex-wrap:wrap}
 }
+
+/* ---------- Mobile-native shell (installed PWA and mobile web) ---------- */
+:root{--safe-bottom:env(safe-area-inset-bottom,0px);--safe-top:env(safe-area-inset-top,0px)}
+html{overflow-x:hidden;-webkit-text-size-adjust:100%}
+body{min-height:100dvh;overflow-x:hidden;overscroll-behavior-y:contain}
+img,svg,video,canvas{max-width:100%}
+.mobile-tabbar{display:none}
+
+@media(max-width:800px){
+ .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);min-height:100dvh}
+ .sidebar{position:sticky;top:0;z-index:60;flex-direction:row;align-items:center;gap:10px;padding:calc(8px + var(--safe-top)) 12px 8px;box-shadow:0 6px 22px #2b144a12}
+ .side-brand{display:flex;gap:8px;font-size:16px;flex-shrink:0}
+ .side-brand b{font-size:16px;letter-spacing:0}
+ .brand-mark.small{width:34px;height:34px;border-radius:11px;font-size:21px}
+ .sidebar nav{display:none}
+ .sidebar .user-chip{display:flex;margin-inline-start:auto;padding:4px;border:0;background:transparent;border-radius:50%}
+ .sidebar .user-chip>span:last-child{display:none}
+ .sidebar .user-chip-avatar{width:34px;height:34px;flex-basis:34px;font-size:18px}
+ .side-bottom{display:flex;margin:0;gap:6px;align-items:center;flex-shrink:0}
+ .side-bottom select{width:auto;max-width:104px;padding:8px 8px;font-size:12px;min-height:38px}
+ .side-bottom button{display:none}
+ .content{padding:18px 14px calc(92px + var(--safe-bottom));max-width:100%;min-width:0}
+ header{margin-bottom:18px;gap:8px}
+ header h2{font-size:20px}
+ header .eyebrow{font-size:9px;letter-spacing:1.4px}
+ .status-pill{font-size:11px;padding:6px 10px;white-space:nowrap}
+ .mobile-tabbar{
+  display:grid;grid-auto-flow:column;grid-auto-columns:1fr;align-items:stretch;
+  position:fixed;inset-inline:0;bottom:0;z-index:70;
+  padding:5px 6px calc(5px + var(--safe-bottom));
+  background:rgba(255,255,255,.97);backdrop-filter:blur(18px) saturate(150%);
+  border-top:1px solid rgba(233,226,245,.95);
+  box-shadow:0 -10px 30px #2d174a10;
+ }
+ .mobile-tab{display:grid;place-items:center;gap:2px;min-height:52px;padding:4px 2px;border-radius:12px;color:#7f7494;text-decoration:none;font-size:10px;font-weight:700;line-height:1.2;text-align:center;transition:color .16s,background .16s}
+ .mobile-tab .nav-icon{width:24px;height:24px;border-radius:0;background:transparent;color:inherit;font-size:0}
+ .mobile-tab .nav-icon svg{width:23px;height:23px;display:block}
+ .mobile-tab.active{color:var(--purple);background:var(--purple-pale)}
+ .mobile-tab:active{background:#f0e8fb}
+ .mobile-tab span:last-child{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ input,select,textarea{font-size:16px !important;min-height:46px}
+ textarea{min-height:96px}
+ button,.button-like{min-height:46px;touch-action:manipulation}
+ .buttons,.actions{gap:8px}
+ .table-wrap,.admin-table-wrap{-webkit-overflow-scrolling:touch;max-width:100%}
+ .toast-viewport{top:calc(8px + var(--safe-top))}
+ .pwa-stack{bottom:calc(80px + var(--safe-bottom))}
+ .modal-card,.pwa-modal{width:min(440px,calc(100vw - 24px));padding:22px}
+ .login-shell{padding:calc(16px + var(--safe-top)) 14px calc(16px + var(--safe-bottom))}
+ .login-card{padding:26px 20px;border-radius:22px}
+ .login-card h1{font-size:27px}
+ .auth-card{max-height:none}
+}
+@media(max-width:440px){
+ .side-brand b{display:none}
+ .side-bottom select{max-width:92px;font-size:11px}
+ .content{padding-inline:12px}
+ header{align-items:flex-start;flex-wrap:wrap}
+}
+
+/* ---------- Install, update and offline prompts ---------- */
+.pwa-stack{position:fixed;bottom:calc(24px + var(--safe-bottom,0px));left:50%;transform:translateX(-50%);z-index:900;width:min(560px,calc(100vw - 20px));display:grid;gap:8px;pointer-events:none}
+.pwa-banner{position:relative;pointer-events:auto;display:flex;align-items:center;gap:12px;padding:13px 14px;border:1px solid #e5dcf2;border-radius:16px;background:rgba(255,255,255,.98);box-shadow:0 16px 44px #2d174a26;color:#35254d;backdrop-filter:blur(14px);animation:pwa-rise .22s ease-out}
+.pwa-banner>div:first-child{min-width:0;flex:1}
+.pwa-banner strong{display:block;font-size:14px;line-height:1.35}
+.pwa-banner p{margin:3px 0 0;font-size:12px;line-height:1.55;color:#7d7391}
+.pwa-banner .pwa-actions{display:flex;gap:7px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+.pwa-banner .pwa-actions button{padding:9px 13px;font-size:12px;min-height:40px;white-space:nowrap}
+.pwa-banner .pwa-actions .ghost{color:#6840a4;border-color:#d9cdee;background:#f7f3fd}
+.pwa-install-mark{width:44px;height:44px;flex:0 0 44px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(145deg,#8b5ce0,#5525a0);color:#fff;font-size:24px;font-weight:800;box-shadow:0 6px 14px #6d35c833}
+.pwa-install-copy{flex:1;min-width:0}
+.pwa-dismiss{position:absolute;top:4px;inset-inline-end:5px;background:transparent;border:0;box-shadow:none;color:#a094b2;font-size:20px;line-height:1;padding:4px;min-height:32px;width:32px}
+.pwa-dismiss:hover{color:#5f5473;transform:none}
+.pwa-update{border-color:#cdbbea;background:linear-gradient(120deg,#f3ecff,#fff)}
+.pwa-offline{background:#fff8e6;border-color:#f1dfae;color:#6b5314}
+.pwa-offline p{color:#8a7228}
+@keyframes pwa-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media(max-width:560px){
+ .pwa-banner{align-items:flex-start;flex-wrap:wrap;padding:12px}
+ .pwa-install-mark{width:38px;height:38px;flex-basis:38px;font-size:21px}
+ .pwa-banner .pwa-actions{width:100%;justify-content:flex-start}
+ .pwa-banner .pwa-actions button{flex:1}
+}
+
+/* ---------- In-app modals and confirmation ---------- */
+.pwa-modal-backdrop{position:fixed;inset:0;z-index:950;background:rgba(24,13,40,.46);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:calc(18px + var(--safe-top,0px)) 16px calc(18px + var(--safe-bottom,0px));animation:pwa-fade .16s ease-out}
+.pwa-modal{width:min(440px,100%);max-height:90dvh;overflow:auto;background:#fff;border-radius:20px;padding:24px;box-shadow:0 30px 80px #16072f55;border:1px solid #eee7f7;text-align:start}
+.pwa-modal h2{margin:0 0 12px;font-size:20px;color:#35254d}
+.pwa-modal p{margin:0 0 12px;color:#6f6580;font-size:14px;line-height:1.7}
+.pwa-modal ol{margin:0 0 14px;padding-inline-start:20px;display:grid;gap:9px;color:#4c3d66;font-size:14px;line-height:1.6}
+.pwa-modal .muted-note{font-size:12px;color:#8b8199}
+.pwa-modal>button{width:100%;margin-top:6px}
+.app-confirm-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:18px}
+.app-confirm-actions button{min-width:104px}
+@media(max-width:440px){.app-confirm-actions button{flex:1;min-width:0}}
+@keyframes pwa-fade{from{opacity:0}to{opacity:1}}
+
+.account-signout{margin-top:18px;background:#f4eefc;color:#8c2f4a;border:1px solid #ecd9e4;box-shadow:none}
+.account-signout:hover{background:#fbeef2}
+
+/* ---------- Account notification preferences ---------- */
+.notification-settings{margin-top:18px;padding:18px}
+.notification-settings .section-head{margin:0 0 12px}
+.notification-settings .section-head h3{margin:0 0 4px}
+.notification-settings .section-head p{margin:0;color:#7d7391;font-size:13px;line-height:1.6;max-width:60ch}
+.notification-settings button{width:auto}
+.notification-settings .tag{width:fit-content}

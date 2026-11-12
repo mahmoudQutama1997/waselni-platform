@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from decimal import Decimal
 from .models import *
+from .validators import validate_image_upload
 
 User = get_user_model()
 
@@ -44,6 +45,12 @@ class MerchantProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Longitude must be between -180 and 180.")
         return value
 
+    def validate_image(self, value):
+        return validate_image_upload(value)
+
+    def validate_cover_image(self, value):
+        return validate_image_upload(value)
+
     def validate(self, attrs):
         latitude = attrs.get("latitude", getattr(self.instance, "latitude", None))
         longitude = attrs.get("longitude", getattr(self.instance, "longitude", None))
@@ -57,6 +64,9 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = "__all__"
         read_only_fields = ["merchant"]
+
+    def validate_image(self, value):
+        return validate_image_upload(value)
 
 class OrderSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source="customer.get_full_name", read_only=True)

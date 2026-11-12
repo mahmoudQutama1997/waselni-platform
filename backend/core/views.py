@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Sum, Q
 from django.utils import timezone
 from rest_framework import generics, viewsets
@@ -22,6 +22,7 @@ from .services.eligibility import (
     subscription_state, classify_subscription, evaluate_captain, legacy_fields, enforce_online_invariant,
     eligible_captain_user_ids, order_compatibility_reasons, set_approval, APPROVAL_STATUSES,
 )
+from .validators import validate_document_upload, validate_image_upload
 
 
 def as_bool(value):
@@ -108,10 +109,10 @@ class RegisterView(APIView):
             validate_password(password)
         except Exception as exc:
             raise ValidationError({"password": list(getattr(exc, "messages", [str(exc)]))})
-        for field in ("profile_image", "store_image", "cover_image", "identity_document", "driving_license_document", "insurance_document"):
-            uploaded = request.FILES.get(field)
-            if uploaded and (uploaded.size > (5 if field in ("profile_image", "store_image", "cover_image") else 10) * 1024 * 1024 or (field in ("profile_image", "store_image", "cover_image") and uploaded.content_type not in ("image/jpeg", "image/png", "image/webp")) or (field not in ("profile_image", "store_image", "cover_image") and not uploaded.name.lower().endswith((".pdf", ".jpg", ".jpeg", ".png")))):
-                raise ValidationError({field: "Upload a JPG, PNG or WEBP image up to 5 MB."})
+        for field in ("profile_image", "store_image", "cover_image"):
+            validate_image_upload(request.FILES.get(field), field=field)
+        for field in ("identity_document", "driving_license_document", "insurance_document"):
+            validate_document_upload(request.FILES.get(field), field=field)
         with transaction.atomic():
             user = User.objects.create_user(
                 username=username, password=password, email=str(data.get("email", "")).strip(),
@@ -158,19 +159,28 @@ class MeView(APIView):
     def get(self, request):
         return Response(UserSerializer(request.user, context={"request": request}).data)
 
+
+class HealthView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+        except Exception:
+            return Response({"status": "error", "database": "unavailable"}, status=503)
+        return Response({"status": "ok", "database": "ok", "time": timezone.now().isoformat()})
+
+
 class AccountProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request):
         user = request.user
         if "profile_image" in request.FILES:
-            image = request.FILES["profile_image"]
-            if image.size > 5 * 1024 * 1024:
-                raise ValidationError({"profile_image": "Image must be 5 MB or smaller."})
-            try:
-                serializers.ImageField().run_validation(image)
-            except serializers.ValidationError:
-                raise ValidationError({"profile_image": "The uploaded file is not a valid image."})
+            image = validate_image_upload(request.FILES["profile_image"], field="profile_image")
             if user.profile_image:
                 user.profile_image.delete(save=False)
             user.profile_image = image
@@ -505,9 +515,7 @@ class CaptainSelfView(APIView):
         for field in ("identity_document", "driving_license_document", "insurance_document"):
             upload = request.FILES.get(field)
             if upload:
-                if upload.size > 10 * 1024 * 1024 or not upload.name.lower().endswith((".pdf", ".jpg", ".jpeg", ".png")):
-                    raise ValidationError({field: "Upload a PDF, JPG or PNG file up to 10 MB."})
-                setattr(p, field, upload)
+                setattr(p, field, validate_document_upload(upload, field=field))
         location_fields = ("current_latitude", "current_longitude")
         supplied_location = any(field in request.data for field in location_fields)
         if supplied_location:
@@ -599,8 +607,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response([])
         # Ineligible or offline captains see no dispatchable orders; the captain
         # dashboard shows the exact reason from the same eligibility result.
+        # Orders already assigned to the captain stay visible so an in-progress
+        # trip can always be finished.
+        own_orders = self.queryset.filter(captain=captain)
         if not enforce_online_invariant(captain)["can_receive_orders"]:
-            return Response([])
+            return Response(self.get_serializer(own_orders, many=True).data)
         qs = self.queryset.filter(Q(status="ready", captain__isnull=True) | Q(status="new", order_type="ride", captain__isnull=True) | Q(captain=captain))
         orders = [o for o in qs if o.captain_id == captain.id or not order_compatibility_reasons(captain, o)]
         return Response(self.get_serializer(orders, many=True).data)

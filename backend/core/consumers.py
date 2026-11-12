@@ -34,7 +34,10 @@ class OrderEventsConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(self.user_group, self.channel_name)
         if self.role_group:
             await self.channel_layer.group_add(self.role_group, self.channel_name)
-        await self.accept()
+        # Browsers reject handshakes that requested subprotocols when the server
+        # selects none. Echo a stable marker; the JWT itself is never reflected.
+        offered = self.scope.get("subprotocols") or []
+        await self.accept(subprotocol="waselni.v1" if "waselni.v1" in offered else None)
         if user.role == "captain":
             snapshot = await captain_snapshot(user.id)
             if snapshot is not None:
