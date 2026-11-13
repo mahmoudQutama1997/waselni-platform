@@ -94,12 +94,14 @@ class MediaUploadApiTests(TestCase):
         self.customer.save(update_fields=["profile_image"])
         self.client.force_authenticate(self.customer)
         with patch("core.storage.upload_to_imagekit", return_value="waselni/profiles/new.png"):
-            with patch("core.storage.delete_from_imagekit") as delete:
+            with patch("core.storage.delete_from_imagekit") as delete, patch("core.storage.purge_imagekit_url") as purge:
                 response = self.client.patch(
                     "/api/account/profile/", {"profile_image": png()}, format="multipart"
                 )
         self.assertEqual(response.status_code, 200, response.content)
         delete.assert_called_once()
+        purge.assert_called_once()
+        self.assertEqual(purge.call_args.args[0], "waselni/profiles/old.png")
         self.assertEqual(delete.call_args.args[0], "waselni/profiles/old.png")
 
     def test_merchant_store_logo_and_cover_are_stored_on_imagekit(self):
@@ -138,12 +140,13 @@ class MediaUploadApiTests(TestCase):
         )
         self.client.force_authenticate(self.merchant)
         with patch("core.storage.upload_to_imagekit", return_value="waselni/products/new.png"):
-            with patch("core.storage.delete_from_imagekit") as delete:
+            with patch("core.storage.delete_from_imagekit") as delete, patch("core.storage.purge_imagekit_url") as purge:
                 response = self.client.patch(
                     f"/api/products/{product.id}/", {"image": png()}, format="multipart"
                 )
         self.assertEqual(response.status_code, 200, response.content)
         delete.assert_called_once()
+        purge.assert_called_once()
         self.assertEqual(delete.call_args.args[0], "waselni/products/old.png")
 
     def test_captain_document_upload_is_private_on_imagekit(self):

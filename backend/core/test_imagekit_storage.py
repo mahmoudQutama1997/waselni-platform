@@ -13,6 +13,7 @@ from .storage import (
     WaselniMediaStorage,
     _unique_name,
     is_captain_document,
+    purge_imagekit_url,
     signed_private_url,
     upload_to_imagekit,
 )
@@ -168,18 +169,59 @@ class StorageRoutingTests(TestCase):
         storage = WaselniMediaStorage()
         with patch("core.storage.upload_to_imagekit", return_value="waselni/products/remote.png"):
             name = storage.save("products/remote.png", ContentFile(PNG_BYTES))
-        with patch("core.storage.delete_from_imagekit") as delete:
+        with (
+            patch("core.storage.delete_from_imagekit") as delete,
+            patch("core.storage.purge_imagekit_url") as purge,
+        ):
             storage.delete(name)
         delete.assert_called_once_with(name, storage._config())
+        purge.assert_called_once_with(name, storage._config())
 
     def test_delete_of_remote_captain_document_uses_imagekit(self):
         storage = WaselniMediaStorage()
         remote = "waselni/captain_documents/identity/licence.pdf"
         with patch("core.storage.upload_to_imagekit", return_value=remote):
             name = storage.save("captain_documents/identity/licence.pdf", ContentFile(PDF_BYTES))
-        with patch("core.storage.delete_from_imagekit") as delete:
+        with (
+            patch("core.storage.delete_from_imagekit") as delete,
+            patch("core.storage.purge_imagekit_url") as purge,
+        ):
             storage.delete(name)
         delete.assert_called_once_with(remote, storage._config())
+        purge.assert_not_called()
+
+    def test_delete_skips_cache_purge_when_remote_delete_fails(self):
+        storage = WaselniMediaStorage()
+        with patch("core.storage.upload_to_imagekit", return_value="waselni/products/remote.png"):
+            name = storage.save("products/remote.png", ContentFile(PNG_BYTES))
+        with (
+            patch("core.storage.delete_from_imagekit", side_effect=ImageKitError("offline")),
+            patch("core.storage.purge_imagekit_url") as purge,
+        ):
+            with self.assertLogs("waselni.storage", level="WARNING"):
+                storage.delete(name)
+        purge.assert_not_called()
+
+    def test_purge_failure_is_logged_and_does_not_raise(self):
+        storage = WaselniMediaStorage()
+        with patch("core.storage.upload_to_imagekit", return_value="waselni/products/remote.png"):
+            name = storage.save("products/remote.png", ContentFile(PNG_BYTES))
+        with (
+            patch("core.storage.delete_from_imagekit"),
+            patch("core.storage.purge_imagekit_url", side_effect=ImageKitError("purge offline")),
+        ):
+            with self.assertLogs("waselni.storage", level="WARNING"):
+                storage.delete(name)
+
+    def test_purge_uses_the_public_url_for_the_file(self):
+        storage = WaselniMediaStorage()
+        with patch("core.storage.urlopen", return_value=_BytesResponse(b"{}")) as call:
+            purge_imagekit_url("waselni/profiles/photo.png", storage._config())
+        request = call.call_args.args[0]
+        self.assertEqual(request.full_url, "https://api.imagekit.io/v1/files/purge")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(json.loads(request.data.decode()), {"url": f"{ENDPOINT}/waselni/profiles/photo.png"})
+
 
     def test_imagekit_names_are_unique_per_upload(self):
         storage = WaselniMediaStorage()

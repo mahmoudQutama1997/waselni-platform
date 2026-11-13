@@ -163,6 +163,30 @@ def delete_from_imagekit(name, config):
     raise ImageKitError(f"ImageKit has no file at {name}.")
 
 
+def purge_imagekit_url(name, config):
+    """Purge the CDN and internal cache for a public ImageKit file.
+
+    ImageKit keeps serving deleted files from its cache until the URL is
+    purged, so a replaced avatar would otherwise stay reachable for a year.
+    """
+    name = _posix(name)
+    path = "/".join(quote(segment) for segment in name.lstrip("/").split("/"))
+    request = Request(
+        f"{config['media_api']}/files/purge",
+        data=json.dumps({"url": f"{config['endpoint']}/{path}"}).encode(),
+        method="POST",
+        headers={
+            "Authorization": _authorization(config),
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            response.read()
+    except (HTTPError, URLError, ValueError, OSError) as exc:
+        raise ImageKitError(f"ImageKit cache purge failed for {name}: {exc}") from exc
+
+
 def signed_private_url(name, config, expires_in=None):
     """Build a short-lived signed URL for a private ImageKit file.
 
@@ -275,6 +299,14 @@ class WaselniMediaStorage(Storage):
             delete_from_imagekit(str(name), config)
         except ImageKitError:
             logger.warning("ImageKit delete failed; remote file left in place: %s", name, exc_info=True)
+            return
+        if not is_captain_document(name):
+            try:
+                purge_imagekit_url(str(name), config)
+            except ImageKitError:
+                logger.warning(
+                    "ImageKit cache purge failed; the old URL may stay cached: %s", name, exc_info=True
+                )
 
     def size(self, name):
         if self._local.exists(name) or not self._is_remote(name):
