@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -174,6 +175,17 @@ class CaptainDocumentSecurityTests(TestCase):
         for folder in ("CAPTAIN_DOCUMENTS", "Captain_Documents", "cApTaIn_DoCuMeNtS"):
             self.assert_media_blocked(f"/media/{folder}/{relative}")
 
+    def test_prefixed_captain_document_media_path_is_blocked(self):
+        path = os.path.join(self.media_root, "waselni", "captain_documents", "identity", "leak.pdf")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(DOC_CONTENT)
+        for url in (
+            "/media/waselni/captain_documents/identity/leak.pdf",
+            "/media/profiles/../waselni/captain_documents/identity/leak.pdf",
+        ):
+            self.assert_media_blocked(url)
+
     def test_backslash_separators_are_blocked(self):
         relative = self.relative_document_name().replace("/", "\\")
         self.assert_media_blocked(f"/media/captain_documents\\{relative}")
@@ -222,3 +234,119 @@ class CaptainDocumentSecurityTests(TestCase):
         self.client.force_authenticate(self.admin)
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 404)
+
+
+REMOTE_DOCUMENT = "waselni/captain_documents/identity/remote.pdf"
+REMOTE_CONFIG = {
+    "IMAGEKIT_PRIVATE_KEY": "test-private-key-not-a-secret",
+    "IMAGEKIT_URL_ENDPOINT": "https://ik.imagekit.io/testendpoint",
+}
+
+
+class _RemoteResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class RemoteCaptainDocumentTests(TestCase):
+    """Captain documents stored as private ImageKit files."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.media_root = tempfile.mkdtemp(prefix="waselni-remote-doc-test-")
+        cls.media_override = override_settings(
+            MEDIA_ROOT=cls.media_root, SERVE_MEDIA=True, **REMOTE_CONFIG
+        )
+        cls.media_override.enable()
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.media_override.disable()
+        shutil.rmtree(cls.media_root, ignore_errors=True)
+
+    def setUp(self):
+        self.client = APIClient()
+        self.captain = User.objects.create_user(
+            username="remote-captain", password="test-password-123", role="captain"
+        )
+        self.profile = CaptainProfile.objects.create(
+            user=self.captain, identity_document=REMOTE_DOCUMENT
+        )
+        self.url = f"/api/captain-documents/{self.profile.id}/identity/"
+        self.other_captain = User.objects.create_user(
+            username="remote-other", password="test-password-123", role="captain"
+        )
+        CaptainProfile.objects.create(user=self.other_captain)
+        self.customer = User.objects.create_user(
+            username="remote-customer", password="test-password-123", role="customer"
+        )
+        self.admin = User.objects.create_user(
+            username="remote-admin", password="test-password-123", role="admin"
+        )
+
+    def test_owner_reads_the_private_file_through_the_backend(self):
+        self.client.force_authenticate(self.captain)
+        with patch("core.storage.urlopen", return_value=_RemoteResponse(DOC_CONTENT)) as call:
+            response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), DOC_CONTENT)
+        self.assertIn("no-store", response["Cache-Control"])
+        self.assertEqual(response["Pragma"], "no-cache")
+        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+        self.assertNotIn("ik-s=", response.get("Location", ""))
+        signed_url = call.call_args.args[0].full_url
+        self.assertIn("ik-t=", signed_url)
+        self.assertIn("ik-s=", signed_url)
+
+    def test_admin_reads_the_private_file(self):
+        self.client.force_authenticate(self.admin)
+        with patch("core.storage.urlopen", return_value=_RemoteResponse(DOC_CONTENT)):
+            response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), DOC_CONTENT)
+
+    def test_other_captain_and_customer_are_denied_without_upstream_call(self):
+        for user in (self.other_captain, self.customer):
+            self.client.force_authenticate(user)
+            with patch("core.storage.urlopen") as upstream:
+                response = self.client.get(self.url)
+            self.assertEqual(response.status_code, 403, user.username)
+            upstream.assert_not_called()
+
+    def test_anonymous_is_denied_without_upstream_call(self):
+        with patch("core.storage.urlopen") as upstream:
+            response = self.client.get(self.url)
+        self.assertIn(response.status_code, (401, 403))
+        upstream.assert_not_called()
+
+    def test_upstream_failure_is_reported_as_not_found(self):
+        self.client.force_authenticate(self.captain)
+        with patch("core.storage.urlopen", side_effect=OSError("offline")):
+            response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn(DOC_CONTENT.decode(), response.content.decode("utf-8", errors="replace"))
+
+    def test_signed_url_is_never_stored_in_the_database(self):
+        self.client.force_authenticate(self.captain)
+        with patch("core.storage.urlopen", return_value=_RemoteResponse(DOC_CONTENT)):
+            self.client.get(self.url)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.identity_document.name, REMOTE_DOCUMENT)
+        self.assertNotIn("ik-s=", self.profile.identity_document.name)
+        self.assertNotIn("ik-t=", self.profile.identity_document.name)
+
+    def test_private_document_has_no_public_url(self):
+        storage = self.profile.identity_document.storage
+        self.assertFalse(storage.url(REMOTE_DOCUMENT).startswith("https://"))
+        self.assertTrue(storage.url(REMOTE_DOCUMENT).startswith("/media/"))

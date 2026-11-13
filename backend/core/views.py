@@ -27,6 +27,7 @@ from .services.eligibility import (
     eligible_captain_user_ids, order_compatibility_reasons, set_approval, APPROVAL_STATUSES,
 )
 from .validators import validate_document_upload, validate_image_upload
+from .storage import WaselniMediaStorage, is_captain_document
 
 
 def as_bool(value):
@@ -221,11 +222,17 @@ CAPTAIN_DOCUMENT_FIELDS = {
 
 
 def _captain_document_is_private(document):
-    """Return True only when the stored name points inside captain_documents."""
-    normalised = posixpath.normpath(str(document.name or "").replace("\\", "/"))
-    segments = [segment for segment in normalised.split("/") if segment and segment not in (".", "..")]
-    if len(segments) < 2 or segments[0].rstrip(" .").casefold() != "captain_documents":
+    """Return True only when the stored name points at a captain document.
+
+    Remote ImageKit names carry the upload prefix, so the check is segment
+    based; a local name must still resolve inside MEDIA_ROOT/captain_documents.
+    """
+    name = str(document.name or "")
+    if not is_captain_document(name):
         return False
+    storage = document.storage
+    if isinstance(storage, WaselniMediaStorage) and storage.is_remote_captain_document(name):
+        return True
     try:
         storage_path = document.path
     except NotImplementedError:
@@ -245,9 +252,10 @@ def _captain_document_is_private(document):
 class CaptainDocumentView(APIView):
     """Stream one captain document to its owner or an admin.
 
-    Files stay under MEDIA_ROOT so existing uploads are never moved or
-    renamed. /media/captain_documents/ is blocked; knowing a file URL is not
-    enough because this view requires an authenticated, authorised user.
+    Documents live on ImageKit as private files; the backend fetches them with
+    a fresh signed URL that is never exposed to the client. Legacy local files
+    are streamed from disk. /media/captain_documents/ is blocked, and knowing a
+    file name is not enough because this view requires an authorised user.
     """
 
     permission_classes = [IsAuthenticated]
@@ -269,8 +277,12 @@ class CaptainDocumentView(APIView):
             raise NotFound("Document not found.")
         if not _captain_document_is_private(document):
             raise NotFound("Document not found.")
+        storage = document.storage
         try:
-            handle = document.open("rb")
+            if isinstance(storage, WaselniMediaStorage) and storage.is_remote_captain_document(document.name):
+                handle = storage.private_document_handle(document.name)
+            else:
+                handle = document.open("rb")
         except (FileNotFoundError, OSError, ValueError, SuspiciousFileOperation):
             raise NotFound("Document not found.")
         response = FileResponse(handle, as_attachment=False, filename=os.path.basename(document.name))
@@ -285,16 +297,17 @@ class AccountProfileView(APIView):
 
     def patch(self, request):
         user = request.user
+        previous = user.profile_image.name if user.profile_image else ""
         if "profile_image" in request.FILES:
-            image = validate_image_upload(request.FILES["profile_image"], field="profile_image")
-            if user.profile_image:
-                user.profile_image.delete(save=False)
-            user.profile_image = image
+            user.profile_image = validate_image_upload(request.FILES["profile_image"], field="profile_image")
         if request.data.get("remove_profile_image") == "true":
-            if user.profile_image:
-                user.profile_image.delete(save=False)
             user.profile_image = None
         user.save()
+        current = user.profile_image.name if user.profile_image else ""
+        if previous and previous != current:
+            # Delete only after the new upload is safely stored, so a failed
+            # upload never destroys the current avatar.
+            user._meta.get_field("profile_image").storage.delete(previous)
         return Response(UserSerializer(user, context={"request": request}).data)
 
 class ChangePasswordView(APIView):
@@ -618,9 +631,13 @@ class CaptainSelfView(APIView):
                 p.online = True
             else:
                 p.online = False
+        replaced_documents = []
         for field in ("identity_document", "driving_license_document", "insurance_document"):
             upload = request.FILES.get(field)
             if upload:
+                current = getattr(p, field)
+                if current:
+                    replaced_documents.append((field, current.name))
                 setattr(p, field, validate_document_upload(upload, field=field))
         location_fields = ("current_latitude", "current_longitude")
         supplied_location = any(field in request.data for field in location_fields)
@@ -638,6 +655,9 @@ class CaptainSelfView(APIView):
             p.current_longitude = longitude.quantize(Decimal("0.000001"))
             p.current_location_updated_at = timezone.now()
         p.save()
+        for field, old_name in replaced_documents:
+            if old_name != getattr(p, field).name:
+                p._meta.get_field(field).storage.delete(old_name)
         if supplied_location:
             active_orders = Order.objects.filter(captain=p, status__in=("assigned", "picked_up", "delivering"))
             for order in active_orders:

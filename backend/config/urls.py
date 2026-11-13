@@ -40,7 +40,9 @@ def _resolves_into_captain_documents(path):
 def is_captain_document_path(path):
     """Return True when a media path can reach the captain documents folder."""
     segments = _path_segments(path)
-    if segments and _is_private_segment(segments[0]):
+    # ImageKit uploads carry the folder prefix (waselni/captain_documents/...),
+    # so the private folder must be detected at any depth, not only first.
+    if any(_is_private_segment(segment) for segment in segments):
         return True
     return _resolves_into_captain_documents(path)
 

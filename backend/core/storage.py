@@ -1,15 +1,23 @@
-"""Media storage that keeps private captain documents local and sends public
-images to ImageKit.
+"""Media storage that sends every new upload to ImageKit.
+
+Public images (profiles, stores, products) are uploaded as normal ImageKit
+files. Captain documents are uploaded with ``isPrivateFile`` and are only
+readable through a short-lived signed URL generated server-side, so they never
+have a public link. When ImageKit is not configured (local development and
+tests) both kinds stay on local disk.
 
 Existing files are never moved: a name that resolves to a file under
 MEDIA_ROOT keeps its /media/ URL, and only names that are not present locally
-are served from the ImageKit endpoint. If ImageKit is unconfigured or an upload
-fails, the file is stored locally and the failure is logged.
+are served from the ImageKit endpoint. A failed ImageKit upload raises
+``ImageKitError`` instead of silently writing to the host's ephemeral disk.
 """
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import posixpath
+import time
 import uuid
 from io import BytesIO
 from urllib.error import HTTPError, URLError
@@ -25,15 +33,21 @@ logger = logging.getLogger("waselni.storage")
 CAPTAIN_DOCUMENTS_FOLDER = "captain_documents"
 DEFAULT_UPLOAD_API = "https://upload.imagekit.io/api/v1/files/upload"
 DEFAULT_MEDIA_API = "https://api.imagekit.io/v1"
+DEFAULT_PRIVATE_URL_TTL = 300
 
 
 class ImageKitError(Exception):
     """Raised when ImageKit rejects or fails an upload/delete request."""
 
 
+def _posix(name):
+    """Normalise separators: Django joins upload_to with the native separator."""
+    return str(name or "").replace("\\", "/")
+
+
 def is_captain_document(name):
     """True when any path segment is the private captain documents folder."""
-    normalised = str(name or "").replace("\\", "/")
+    normalised = _posix(name)
     segments = [segment for segment in posixpath.normpath(normalised).split("/") if segment and segment != "."]
     return any(segment.rstrip(" .").casefold() == CAPTAIN_DOCUMENTS_FOLDER for segment in segments)
 
@@ -76,16 +90,24 @@ def _multipart_body(boundary, fields, file_field):
     return head + data + tail
 
 
-def upload_to_imagekit(name, data, config):
-    """Upload bytes to ImageKit and return the stored remote path."""
+def upload_to_imagekit(name, data, config, private=False):
+    """Upload bytes to ImageKit and return the stored remote path.
+
+    ``private=True`` marks captain documents as private on ImageKit, which
+    makes them readable only through a signed URL.
+    """
+    name = _posix(name)
     folder = posixpath.dirname(name)
     if config["prefix"]:
         folder = posixpath.join(config["prefix"], folder) if folder else config["prefix"]
     file_name = posixpath.basename(name)
     boundary = f"----waselni{uuid.uuid4().hex}"
+    fields = {"fileName": file_name, "folder": f"/{folder}" if folder else "", "useUniqueFileName": "false"}
+    if private:
+        fields["isPrivateFile"] = "true"
     body = _multipart_body(
         boundary,
-        {"fileName": file_name, "folder": f"/{folder}" if folder else "", "useUniqueFileName": "false"},
+        fields,
         ("file", file_name, data),
     )
     request = Request(
@@ -110,6 +132,7 @@ def upload_to_imagekit(name, data, config):
 
 def delete_from_imagekit(name, config):
     """Delete a remote file by path. Raises ImageKitError on any failure."""
+    name = _posix(name)
     query = urlencode({"searchQuery": f'path="{name if name.startswith("/") else "/" + name}"'})
     request = Request(
         f"{config['media_api']}/files?{query}",
@@ -140,15 +163,36 @@ def delete_from_imagekit(name, config):
     raise ImageKitError(f"ImageKit has no file at {name}.")
 
 
+def signed_private_url(name, config, expires_in=None):
+    """Build a short-lived signed URL for a private ImageKit file.
+
+    ImageKit expects HMAC-SHA1(private_key, path + expiry) in ``ik-s`` and the
+    unix expiry in ``ik-t``. The URL is generated on the server and is never
+    stored; callers must not log it because the signature grants access.
+    """
+    ttl = int(expires_in or getattr(settings, "IMAGEKIT_PRIVATE_URL_TTL", DEFAULT_PRIVATE_URL_TTL))
+    expiry = int(time.time()) + max(30, ttl)
+    path = "/" + _posix(name).lstrip("/")
+    signature = hmac.new(
+        config["private_key"].encode(), f"{path}{expiry}".encode(), hashlib.sha1
+    ).hexdigest()
+    encoded = "/".join(quote(segment) for segment in path.strip("/").split("/"))
+    return f"{config['endpoint']}/{encoded}?ik-t={expiry}&ik-s={signature}"
+
+
 def _unique_name(name):
-    folder, file_name = posixpath.split(str(name))
+    folder, file_name = posixpath.split(_posix(name))
     stem, extension = posixpath.splitext(file_name)
     unique = f"{stem[:40]}-{uuid.uuid4().hex}{extension.lower()}"
     return posixpath.join(folder, unique) if folder else unique
 
 
 class WaselniMediaStorage(Storage):
-    """Route private documents to local disk and public images to ImageKit."""
+    """Send public images and private captain documents to ImageKit.
+
+    Local disk is only used when ImageKit is not configured, which is limited
+    to development and tests.
+    """
 
     def __init__(self):
         self._local = FileSystemStorage()
@@ -161,8 +205,12 @@ class WaselniMediaStorage(Storage):
         legacy local file already exists under MEDIA_ROOT."""
         return bool(self._config()) and not is_captain_document(name) and not self._local.exists(name)
 
+    def is_remote_captain_document(self, name):
+        """True when a captain document lives on ImageKit rather than disk."""
+        return bool(self._config()) and is_captain_document(name) and not self._local.exists(name)
+
     def get_available_name(self, name, max_length=None):
-        if not is_captain_document(name) and self._config():
+        if self._config():
             # _save() adds a UUID; that makes collisions impossible without a
             # filesystem round trip on every upload.
             return name
@@ -170,24 +218,44 @@ class WaselniMediaStorage(Storage):
 
     def _save(self, name, content):
         data = content.read()
-        if is_captain_document(name):
-            return self._local._save(name, ContentFile(data, name=name))
         config = self._config()
         if not config:
             return self._local._save(name, ContentFile(data, name=name))
         unique = _unique_name(name)
+        private = is_captain_document(unique)
         try:
-            return upload_to_imagekit(unique, data, config)
+            return upload_to_imagekit(unique, data, config, private=private)
         except ImageKitError:
-            logger.exception("ImageKit upload failed; saved %s to local media instead.", unique)
-            return self._local._save(unique, ContentFile(data, name=unique))
+            # Never fall back to the host's ephemeral disk: the image would
+            # disappear on the next restart and its owner would never know.
+            logger.exception(
+                "ImageKit upload failed for %s; the file was not stored locally.", unique
+            )
+            raise
 
     def url(self, name):
         if self._is_remote(name):
             endpoint = self._config()["endpoint"]
-            path = "/".join(quote(segment) for segment in str(name).lstrip("/").split("/"))
+            path = "/".join(quote(segment) for segment in _posix(name).lstrip("/").split("/"))
             return f"{endpoint}/{path}"
         return self._local.url(name)
+
+    def private_document_handle(self, name, expires_in=None):
+        """Read a private remote document through a fresh signed URL.
+
+        The signed URL is created here and never returned to the caller, so it
+        cannot leak through the API response or browser history.
+        """
+        config = self._config()
+        if not config or not is_captain_document(name):
+            raise FileNotFoundError("No private remote document is available.")
+        request = Request(signed_private_url(name, config, expires_in))
+        try:
+            with urlopen(request, timeout=25) as response:
+                data = response.read()
+        except (HTTPError, URLError, OSError) as exc:
+            raise FileNotFoundError(f"Could not read private document {name}.") from exc
+        return File(BytesIO(data), name=str(name))
 
     def exists(self, name):
         if self._local.exists(name):
@@ -201,7 +269,7 @@ class WaselniMediaStorage(Storage):
             self._local.delete(name)
             return
         config = self._config()
-        if not config or is_captain_document(name):
+        if not config:
             return
         try:
             delete_from_imagekit(str(name), config)

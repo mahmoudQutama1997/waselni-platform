@@ -6,6 +6,14 @@ from .validators import validate_image_upload
 
 User = get_user_model()
 
+
+def _delete_replaced_upload(instance, field_name, previous_name):
+    """Remove the old file only after the replacement has been stored."""
+    if not previous_name or previous_name == getattr(instance, field_name).name:
+        return
+    instance._meta.get_field(field_name).storage.delete(previous_name)
+
+
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -58,6 +66,17 @@ class MerchantProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Provide both store coordinates.")
         return attrs
 
+    def update(self, instance, validated_data):
+        previous = {
+            field: getattr(instance, field).name
+            for field in ("image", "cover_image")
+            if field in validated_data and getattr(instance, field)
+        }
+        instance = super().update(instance, validated_data)
+        for field, old_name in previous.items():
+            _delete_replaced_upload(instance, field, old_name)
+        return instance
+
 class ProductSerializer(serializers.ModelSerializer):
     merchant_name = serializers.CharField(source="merchant.shop_name", read_only=True)
     class Meta:
@@ -67,6 +86,13 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def validate_image(self, value):
         return validate_image_upload(value)
+
+    def update(self, instance, validated_data):
+        previous = instance.image.name if instance.image and "image" in validated_data else ""
+        instance = super().update(instance, validated_data)
+        _delete_replaced_upload(instance, "image", previous)
+        return instance
+
 
 class OrderSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source="customer.get_full_name", read_only=True)
