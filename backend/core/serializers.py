@@ -1,10 +1,53 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from .models import *
 from .validators import validate_image_upload
 
 User = get_user_model()
+
+# Every map component emits full-precision floats (e.g. 31.94993417521601), while
+# the coordinate columns store 6 decimals. DRF validates max_digits before it
+# quantizes, so raw floats are rejected; normalize them first on the way in.
+COORDINATE_FIELDS = ("pickup_latitude", "pickup_longitude", "dropoff_latitude", "dropoff_longitude")
+COORDINATE_QUANTUM = Decimal("0.000001")
+
+
+def normalize_coordinate(value):
+    """Round a raw map coordinate to the 6-decimal precision used by the models."""
+    if value is None or value == "":
+        return value
+    try:
+        number = Decimal(str(value).strip())
+    except (InvalidOperation, TypeError, ValueError):
+        return value
+    if not number.is_finite():
+        return value
+    return number.quantize(COORDINATE_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def normalize_coordinates(data, fields=COORDINATE_FIELDS):
+    """Return a mutable copy of request data with coordinate fields quantized."""
+    try:
+        data = data.copy()
+    except AttributeError:
+        return data
+    for field in fields:
+        if field in data:
+            data[field] = normalize_coordinate(data[field])
+    return data
+
+
+def _validate_latitude(value):
+    if value is not None and not Decimal("-90") <= value <= Decimal("90"):
+        raise serializers.ValidationError("Latitude must be between -90 and 90.")
+    return value
+
+
+def _validate_longitude(value):
+    if value is not None and not Decimal("-180") <= value <= Decimal("180"):
+        raise serializers.ValidationError("Longitude must be between -180 and 180.")
+    return value
 
 
 def _delete_replaced_upload(instance, field_name, previous_name):
@@ -44,14 +87,13 @@ class MerchantProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "is_open", "rating"]
 
     def validate_latitude(self, value):
-        if value is not None and not Decimal("-90") <= value <= Decimal("90"):
-            raise serializers.ValidationError("Latitude must be between -90 and 90.")
-        return value
+        return _validate_latitude(value)
 
     def validate_longitude(self, value):
-        if value is not None and not Decimal("-180") <= value <= Decimal("180"):
-            raise serializers.ValidationError("Longitude must be between -180 and 180.")
-        return value
+        return _validate_longitude(value)
+
+    def to_internal_value(self, data):
+        return super().to_internal_value(normalize_coordinates(data, ("latitude", "longitude")))
 
     def validate_image(self, value):
         return validate_image_upload(value)
@@ -132,6 +174,21 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["customer", "captain", "status", "accepted_at", "captain_accepted_at", "ready_at", "created_at", "updated_at", "total", "subtotal", "request_key"]
 
+    def to_internal_value(self, data):
+        return super().to_internal_value(normalize_coordinates(data))
+
+    def validate_pickup_latitude(self, value):
+        return _validate_latitude(value)
+
+    def validate_pickup_longitude(self, value):
+        return _validate_longitude(value)
+
+    def validate_dropoff_latitude(self, value):
+        return _validate_latitude(value)
+
+    def validate_dropoff_longitude(self, value):
+        return _validate_longitude(value)
+
     def validate(self, attrs):
         request = self.context.get("request")
         if request and request.method == "POST":
@@ -171,14 +228,12 @@ class OrderSerializer(serializers.ModelSerializer):
                 # Persist the merchant pickup point on every store order so admin,
                 # merchant and authorized delivery views share the same origin.
                 attrs["pickup_address"] = merchant.address or merchant.shop_name
-                attrs["pickup_latitude"] = merchant.latitude
-                attrs["pickup_longitude"] = merchant.longitude
+                attrs["pickup_latitude"] = normalize_coordinate(merchant.latitude)
+                attrs["pickup_longitude"] = normalize_coordinate(merchant.longitude)
                 dlat = attrs.get("dropoff_latitude")
                 dlon = attrs.get("dropoff_longitude")
                 if dlat is None or dlon is None:
                     raise serializers.ValidationError({"location": "Select the customer's delivery point on the map."})
-                if not (-90 <= float(dlat) <= 90 and -180 <= float(dlon) <= 180):
-                    raise serializers.ValidationError({"location": "Delivery coordinates are outside valid ranges."})
                 raw_fee = attrs.get("delivery_fee")
                 if raw_fee is None:
                     raise serializers.ValidationError({"delivery_fee": "Enter the delivery price before sending the order to captains."})

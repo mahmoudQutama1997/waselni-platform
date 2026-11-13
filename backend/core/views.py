@@ -5,7 +5,7 @@ import secrets
 import calendar
 import math
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
@@ -756,17 +756,29 @@ class OrderViewSet(viewsets.ModelViewSet):
         if not pickup or not dropoff:
             raise ValidationError({"addresses": "Enter both pickup and destination addresses."})
         try:
-            plat, plon = float(data.get("pickup_latitude")), float(data.get("pickup_longitude"))
-            dlat, dlon = float(data.get("dropoff_latitude")), float(data.get("dropoff_longitude"))
-        except (TypeError, ValueError):
+            plat = Decimal(str(data.get("pickup_latitude")))
+            plon = Decimal(str(data.get("pickup_longitude")))
+            dlat = Decimal(str(data.get("dropoff_latitude")))
+            dlon = Decimal(str(data.get("dropoff_longitude")))
+        except (TypeError, ValueError, InvalidOperation):
             raise ValidationError({"location": "Select both locations using the location controls."})
-        if not (-90 <= plat <= 90 and -90 <= dlat <= 90 and -180 <= plon <= 180 and -180 <= dlon <= 180):
+        if not all(value.is_finite() for value in (plat, plon, dlat, dlon)):
             raise ValidationError({"location": "Coordinates are outside valid ranges."})
+        if not (Decimal("-90") <= plat <= Decimal("90") and Decimal("-90") <= dlat <= Decimal("90")
+                and Decimal("-180") <= plon <= Decimal("180") and Decimal("-180") <= dlon <= Decimal("180")):
+            raise ValidationError({"location": "Coordinates are outside valid ranges."})
+        # Map components send full float precision; store the same 6 decimals as every
+        # other coordinate field so pickup and dropoff stay consistent across the system.
+        plat, plon, dlat, dlon = (
+            value.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+            for value in (plat, plon, dlat, dlon)
+        )
+        fplat, fplon, fdlat, fdlon = map(float, (plat, plon, dlat, dlon))
         # Road distance is calculated by the map in the client; the customer proposes
         # the delivery fare and a captain explicitly accepts that exact fare.
         radius = 6371.0
-        a1, a2 = math.radians(plat), math.radians(dlat)
-        da, do = math.radians(dlat-plat), math.radians(dlon-plon)
+        a1, a2 = math.radians(fplat), math.radians(fdlat)
+        da, do = math.radians(fdlat - fplat), math.radians(fdlon - fplon)
         h = math.sin(da/2)**2 + math.cos(a1)*math.cos(a2)*math.sin(do/2)**2
         distance = max(0.5, 2 * radius * math.asin(min(1, math.sqrt(h))) * 1.25)
         checkpoint = str(data.get("requires_checkpoint", "false")).lower() in ("true", "1", "yes")
