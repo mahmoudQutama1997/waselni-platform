@@ -130,9 +130,8 @@ def upload_to_imagekit(name, data, config, private=False):
     return remote_path
 
 
-def delete_from_imagekit(name, config):
-    """Delete a remote file by path. Raises ImageKitError on any failure."""
-    name = _posix(name)
+def _search_remote_file_id(name, config):
+    """Look a file up through the search API; None when it is not indexed yet."""
     query = urlencode({"searchQuery": f'path="{name if name.startswith("/") else "/" + name}"'})
     request = Request(
         f"{config['media_api']}/files?{query}",
@@ -144,23 +143,64 @@ def delete_from_imagekit(name, config):
     except (HTTPError, URLError, ValueError, OSError) as exc:
         raise ImageKitError(f"ImageKit lookup failed for {name}: {exc}") from exc
     for item in files or []:
-        if str(item.get("filePath", "")).lstrip("/") != name.lstrip("/"):
-            continue
-        file_id = item.get("fileId")
-        if not file_id:
-            continue
-        delete_request = Request(
-            f"{config['media_api']}/files/{quote(str(file_id))}",
-            method="DELETE",
+        if str(item.get("filePath", "")).lstrip("/") == name.lstrip("/"):
+            return item.get("fileId")
+    return None
+
+
+def _folder_remote_file_id(name, config, limit=1000, max_pages=20):
+    """Find a file by listing its folder, which does not depend on the search index."""
+    folder = posixpath.dirname(name)
+    skip = 0
+    for _ in range(max_pages):
+        query = urlencode({
+            "path": f"/{folder}/" if folder else "/",
+            "limit": limit,
+            "skip": skip,
+            "type": "file",
+        })
+        request = Request(
+            f"{config['media_api']}/files?{query}",
             headers={"Authorization": _authorization(config)},
         )
         try:
-            with urlopen(delete_request, timeout=20) as response:
-                response.read()
-        except (HTTPError, URLError, OSError) as exc:
-            raise ImageKitError(f"ImageKit delete failed for {name}: {exc}") from exc
-        return
-    raise ImageKitError(f"ImageKit has no file at {name}.")
+            with urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode() or "[]")
+        except (HTTPError, URLError, ValueError, OSError) as exc:
+            raise ImageKitError(f"ImageKit folder listing failed for {name}: {exc}") from exc
+        items = payload if isinstance(payload, list) else payload.get("items") or payload.get("files") or []
+        for item in items:
+            if str(item.get("filePath", "")).lstrip("/") == name.lstrip("/"):
+                return item.get("fileId")
+        if len(items) < limit:
+            break
+        skip += limit
+    return None
+
+
+def delete_from_imagekit(name, config):
+    """Delete a remote file by path. Raises ImageKitError on any failure."""
+    name = _posix(name)
+    try:
+        file_id = _search_remote_file_id(name, config)
+    except ImageKitError:
+        file_id = None
+    if not file_id:
+        # Search is eventually consistent; listing the folder still finds a
+        # file that was uploaded moments ago.
+        file_id = _folder_remote_file_id(name, config)
+    if not file_id:
+        raise ImageKitError(f"ImageKit has no file at {name}.")
+    delete_request = Request(
+        f"{config['media_api']}/files/{quote(str(file_id))}",
+        method="DELETE",
+        headers={"Authorization": _authorization(config)},
+    )
+    try:
+        with urlopen(delete_request, timeout=20) as response:
+            response.read()
+    except (HTTPError, URLError, OSError) as exc:
+        raise ImageKitError(f"ImageKit delete failed for {name}: {exc}") from exc
 
 
 def purge_imagekit_url(name, config):

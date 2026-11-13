@@ -211,7 +211,8 @@ class HealthView(APIView):
                 cursor.fetchone()
         except Exception:
             return Response({"status": "error", "database": "unavailable"}, status=503)
-        return Response({"status": "ok", "database": "ok", "time": timezone.now().isoformat()})
+        commit = (os.getenv("RENDER_GIT_COMMIT") or "")[:7]
+        return Response({"status": "ok", "database": "ok", "time": timezone.now().isoformat(), "commit": commit})
 
 
 CAPTAIN_DOCUMENT_FIELDS = {

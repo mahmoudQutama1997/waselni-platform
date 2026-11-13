@@ -130,10 +130,12 @@ class AsgiWiringTests(SimpleTestCase):
 
 class HealthEndpointTests(TestCase):
     def test_health_is_public_and_reports_database(self):
-        response = APIClient().get("/api/health/")
+        with mock.patch.dict("os.environ", {"RENDER_GIT_COMMIT": "abcdef1234567890"}):
+            response = APIClient().get("/api/health/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status"], "ok")
         self.assertEqual(response.data["database"], "ok")
+        self.assertEqual(response.data["commit"], "abcdef1")
 
     def test_health_returns_503_when_database_is_unavailable(self):
         with mock.patch("core.views.connection.cursor", side_effect=RuntimeError("down")):

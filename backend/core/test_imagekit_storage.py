@@ -12,6 +12,7 @@ from .storage import (
     ImageKitError,
     WaselniMediaStorage,
     _unique_name,
+    delete_from_imagekit,
     is_captain_document,
     purge_imagekit_url,
     signed_private_url,
@@ -331,6 +332,32 @@ class ImageKitRequestTests(SimpleTestCase):
         self.assertIn(b'name="isPrivateFile"', body)
         self.assertIn(b"\r\n\r\ntrue\r\n", body)
         self.assertIn(b"/waselni/captain_documents/identity", body)
+
+    def test_delete_uses_the_search_result_when_available(self):
+        found = [{"filePath": "/waselni/profiles/a.png", "fileId": "file-1"}]
+        with patch("core.storage.urlopen", side_effect=[self._Response(found), self._Response({})]) as call:
+            delete_from_imagekit("waselni/profiles/a.png", CONFIG)
+        self.assertEqual(call.call_count, 2)
+        delete_request = call.call_args_list[1].args[0]
+        self.assertEqual(delete_request.get_method(), "DELETE")
+        self.assertIn("/files/file-1", delete_request.full_url)
+
+    def test_delete_falls_back_to_folder_listing_when_search_index_lags(self):
+        listing = {"items": [{"filePath": "/waselni/profiles/a.png", "fileId": "file-2"}]}
+        with patch(
+            "core.storage.urlopen", side_effect=[self._Response([]), self._Response(listing), self._Response({})]
+        ) as call:
+            delete_from_imagekit("waselni/profiles/a.png", CONFIG)
+        self.assertEqual(call.call_count, 3)
+        listing_request = call.call_args_list[1].args[0]
+        self.assertIn("path=%2Fwaselni%2Fprofiles%2F", listing_request.full_url)
+        delete_request = call.call_args_list[2].args[0]
+        self.assertIn("/files/file-2", delete_request.full_url)
+
+    def test_delete_reports_a_missing_file(self):
+        with patch("core.storage.urlopen", side_effect=[self._Response([]), self._Response({"items": []})]):
+            with self.assertRaises(ImageKitError):
+                delete_from_imagekit("waselni/profiles/missing.png", CONFIG)
 
     def test_windows_separators_are_normalised_before_upload(self):
         # Django's generate_filename uses the host separator, so on Windows the
