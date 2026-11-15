@@ -25,6 +25,7 @@ const GEOCODING_BASE=GEOCODING_REVERSE_URL
 const statusLabel=(t,s)=>t[s]||s
 const stockTone=p=>p.stock_status==='out'?'is-out':p.stock_status==='low'?'is-low':p.stock_status==='in'?'is-in':'is-untracked'
 const stockText=(t,p)=>p.stock_status==='out'?t.outOfStock:p.stock_status==='low'?t.lowStock:p.stock_status==='in'?t.inStock:t.untrackedStock
+const fillText=(text,values)=>String(text||'').replace(/\{(\w+)\}/g,(match,key)=>values[key]??match)
 const APP_ROLE=(import.meta.env.VITE_WASELNI_APP_ROLE||'all').toLowerCase()
 const APP_ROLE_LABEL={customer:'تطبيق الزبون',captain:'تطبيق الكابتن',merchant:'تطبيق التاجر',admin:'لوحة الإدارة',all:'وصلني'}
 const PAGE_TITLE_KEY={orders:'orders',ride:'rideService',catalog:'catalog',reports:'reports',account:'accountProfile',profile:'profile',captain:'captain',settlements:'settlements',admin:'dashboard',support:'support'}
@@ -114,7 +115,39 @@ function App(){
  </main><MobileNav role={role} t={t}/></div>
 }
 
-function useLoad(path){const [data,setData]=useState([]),[err,setErr]=useState('');const [tick,setTick]=useState(0);useEffect(()=>{let live=true;const load=()=>api(path).then(d=>{if(live){setData(Array.isArray(d)?d:d.results||[]);setErr('')}}).catch(e=>{if(live)setErr(e.message)});load();const timer=setInterval(load,5000);const ws=orderSocket(()=>load());return()=>{live=false;clearInterval(timer);if(ws)ws.close()}},[path,tick]);return {data,err,reload:()=>setTick(t=>t+1)}}
+function useLoad(path,onEvent){
+ const [data,setData]=useState([]),[err,setErr]=useState('');
+ const [updatedAt,setUpdatedAt]=useState(0);
+ const [tick,setTick]=useState(0);
+ const seq=useRef(0),revision=useRef(0),handler=useRef(onEvent);
+ handler.current=onEvent;
+ useEffect(()=>{let live=true;
+  const load=()=>{
+   const mine=++seq.current,rev=revision.current;
+   return api(path).then(d=>{
+    // A response that started before a newer value arrived must never win.
+    if(!live||mine!==seq.current||rev!==revision.current)return;
+    setData(Array.isArray(d)?d:d.results||[]);setErr('');setUpdatedAt(Date.now());
+   }).catch(e=>{if(live&&mine===seq.current)setErr(e.message||'')});
+  };
+  const patch=fn=>{revision.current+=1;setData(fn)};
+  const refresh=()=>{if(document.visibilityState!=='hidden')load()};
+  load();
+  const timer=setInterval(refresh,5000);
+  const ws=orderSocket(m=>{
+   if(handler.current)handler.current(m,patch);
+   load();
+  });
+  const onVisible=()=>{if(document.visibilityState==='visible')load()};
+  const onRealtime=e=>{if(e.detail&&e.detail.connected)load()};
+  window.addEventListener('focus',refresh);
+  window.addEventListener('online',refresh);
+  window.addEventListener('waselni:realtime',onRealtime);
+  document.addEventListener('visibilitychange',onVisible);
+  return ()=>{live=false;clearInterval(timer);ws.close();window.removeEventListener('focus',refresh);window.removeEventListener('online',refresh);window.removeEventListener('waselni:realtime',onRealtime);document.removeEventListener('visibilitychange',onVisible)};
+ },[path,tick]);
+ return {data,err,updatedAt,reload:()=>setTick(t=>t+1)};
+}
 function Home({role,t,lang}){if(role==='admin')return <Admin t={t}/>;if(role==='captain')return <Captain t={t}/>;if(role==='merchant')return <MerchantHome t={t} lang={lang}/>;return <CustomerStorefront lang={lang}/>}
 
 function MerchantHome({t,lang}){
@@ -460,7 +493,13 @@ function RideBooking({t,lang}){
 }
 
 function Catalog({t}){
- const {data,err,reload}=useLoad('/products/')
+ const {data,err,updatedAt,reload}=useLoad('/products/',(m,patch)=>{
+  if(m?.type!=='stock.updated'||m.product_id==null)return;
+  patch(rows=>rows.map(p=>p.id===m.product_id?{...p,quantity:m.quantity,stock_status:m.stock_status||p.stock_status}:p));
+  if(m.reason==='manual')return;
+  const key=m.reason==='cancel'?'stockRestoredNotice':'stockSoldNotice';
+  notify(fillText(t[key],{count:Math.abs(Number(m.delta)||0),name:m.name||'',left:m.quantity}),'success');
+ });
  const [form,setForm]=useState({name:'',price:'',category:'',description:'',quantity:'',low_stock_threshold:''})
  const [image,setImage]=useState(null),[preview,setPreview]=useState(''),[saving,setSaving]=useState(false)
  const [query,setQuery]=useState('')
@@ -475,7 +514,7 @@ function Catalog({t}){
  function cancelEdit(){setEditing(null);setEditImage(null);setEditPreview('')}
  async function saveEdit(e){e.preventDefault();setEditBusy(true);try{const fd=new FormData();Object.entries(editForm).forEach(([k,v])=>{if((k==='quantity'||k==='low_stock_threshold')&&String(v).trim()==='')return;fd.append(k,v)});if(editImage)fd.append('image',editImage);await api(`/products/${editing}/`,{method:'PATCH',body:fd});cancelEdit();reload();notify(t.productUpdated||t.productAdded,'success')}catch(e){notify(e.message,'error')}finally{setEditBusy(false)}}
  async function removeProduct(p){if(!(await confirmAction({title:t.deleteProduct,message:t.deleteProductConfirm||'حذف هذا المنتج نهائياً؟',confirmLabel:t.deleteProduct,cancelLabel:t.cancel})))return;try{await api(`/products/${p.id}/`,{method:'DELETE'});if(editing===p.id)cancelEdit();reload();notify(t.productDeleted||t.productAvailabilityUpdated,'success')}catch(e){notify(e.message,'error')}}
- return <><div className="section-head"><div><h3>{t.catalog}</h3><p>{t.catalogSubtitle}</p></div><span className="count-pill">{data.length} {t.productsCount}</span></div>
+ return <><div className="section-head"><div><h3>{t.catalog}</h3><p>{t.catalogSubtitle}</p></div><span className="count-pill">{data.length} {t.productsCount}</span><small className={`muted-note ${err?'stock-stale':''}`} role="status">{err?t.stockStale:`${t.stockLiveUpdated} ${updatedAt?new Date(updatedAt).toLocaleTimeString():'—'}`}</small></div>
  <form className="panel product-editor" onSubmit={save}><div className="editor-title"><span className="feature-icon">✦</span><div><h3>{t.addProductTitle}</h3><p>{t.addProductHint}</p></div></div>
  <div className="product-editor-grid"><div className="upload-box"><input id="product-image" type="file" accept="image/*" onChange={e=>chooseImage(e.target.files?.[0])}/><label htmlFor="product-image" className="upload-preview">{preview?<SafeImage src={preview} alt=""/>:<><span>＋</span><b>{t.uploadProductImage}</b><small>{t.imageFormats}</small></>}</label></div>
  <div className="editor-fields"><label>{t.name}<input placeholder={t.productNamePlaceholder} value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/></label><div className="two-fields"><label>{t.category}<input placeholder={t.category} value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></label><label>{t.price}<input type="number" min="0" step=".01" placeholder="0.00" value={form.price} onChange={e=>setForm({...form,price:e.target.value})} required/></label></div><label>{t.description}<textarea rows="3" placeholder={t.productDescriptionPlaceholder} value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label><div className="two-fields"><label>{t.quantity}<input type="number" min="0" step="1" placeholder="0" value={form.quantity} onChange={e=>setForm({...form,quantity:e.target.value})}/></label><label>{t.lowStockThreshold}<input type="number" min="0" step="1" placeholder="5" value={form.low_stock_threshold} onChange={e=>setForm({...form,low_stock_threshold:e.target.value})}/></label></div><p className="muted-note">{t.stockHint}</p><button disabled={saving}>{saving?t.saving:t.addProduct}</button></div></div></form>

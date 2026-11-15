@@ -66,6 +66,38 @@ def publish_order_event(order, event="order.updated"):
         async_to_sync(layer.group_send)(group, {"type": "order_event", "payload": payload})
 
 
+def publish_stock_events(before, after, reason, order=None):
+    """Push the exact post-change count to the merchant and admins.
+
+    Screens apply this value immediately and then refetch through REST, so a
+    sale never leaves a stale number waiting for the next poll. The payload
+    carries the committed quantity, not a client-side guess.
+    """
+    layer = get_channel_layer()
+    if not layer:
+        return
+    for product in after:
+        if product.quantity is None:
+            continue
+        merchant_user = getattr(product.merchant, "user_id", None)
+        if not merchant_user:
+            continue
+        previous = before.get(product.id)
+        payload = {
+            "type": "stock.updated",
+            "product_id": product.id,
+            "name": product.name,
+            "quantity": product.quantity,
+            "previous": previous if previous is not None else 0,
+            "delta": product.quantity - (previous if previous is not None else 0),
+            "stock_status": product.stock_status,
+            "reason": reason,
+            "order_id": order.id if order is not None else None,
+        }
+        for group in {f"user_{merchant_user}", "role_admin"}:
+            async_to_sync(layer.group_send)(group, {"type": "order_event", "payload": payload})
+
+
 def publish_captain_eligibility(user):
     """Push the fresh eligibility snapshot to one captain's open sockets."""
     layer = get_channel_layer()
@@ -178,6 +210,7 @@ def restore_order_stock(order):
     """Return reserved stock exactly once. Caller holds a row lock on the order."""
     if order.stock_restored_at or order.order_type != "store":
         return False
+    restored = {}
     for row in order.items or []:
         if not row.get("stock_tracked"):
             continue
@@ -187,8 +220,17 @@ def restore_order_stock(order):
             continue
         if quantity <= 0:
             continue
+        restored[product_id] = restored.get(product_id, 0) + quantity
+    before = {
+        p.id: p.quantity
+        for p in Product.objects.filter(pk__in=restored).only("id", "quantity")
+    }
+    for product_id, quantity in restored.items():
         Product.objects.filter(pk=product_id).update(quantity=F("quantity") + quantity)
     order.stock_restored_at = timezone.now()
+    if restored:
+        after = list(Product.objects.select_related("merchant").filter(pk__in=restored))
+        transaction.on_commit(lambda: publish_stock_events(before, after, "cancel", order))
     return True
 
 
@@ -812,7 +854,10 @@ class ProductViewSet(viewsets.ModelViewSet):
         serializer.save(merchant=profile)
     def perform_update(self, serializer):
         if self.request.user.role != "merchant": raise PermissionDenied("Only merchants can edit products.")
-        serializer.save()
+        previous = serializer.instance.quantity
+        product = serializer.save()
+        if product.quantity != previous:
+            publish_stock_events({product.id: previous}, [product], "manual")
     def perform_destroy(self, instance):
         if self.request.user.role != "merchant": raise PermissionDenied("Only merchants can delete products.")
         instance.delete()
@@ -838,6 +883,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             product.quantity = max(0, min(previous + delta, 1000000))
             product.save(update_fields=["quantity"])
         notify_stock_changes({product.id: previous}, [product])
+        publish_stock_events({product.id: previous}, [product], "manual")
         return Response(self.get_serializer(product).data)
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -909,8 +955,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             publish_order_event(order, "order.created")
             notify_order_created(order)
             if tracked_ids:
-                after = Product.objects.select_related("merchant").filter(pk__in=tracked_ids)
-                notify_stock_changes(before, list(after))
+                after = list(Product.objects.select_related("merchant").filter(pk__in=tracked_ids))
+                notify_stock_changes(before, after)
+                publish_stock_events(before, after, "order", order)
         return Response(self.get_serializer(order).data, status=201 if created else 200)
 
     @action(detail=False, methods=["get"])

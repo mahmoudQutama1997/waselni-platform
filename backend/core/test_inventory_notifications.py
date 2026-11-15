@@ -1,6 +1,7 @@
 """Inventory reservations, stock restoration and in-app notifications."""
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from unittest.mock import patch
 import threading
 import time
 import uuid
@@ -494,6 +495,153 @@ class StockLifecycleMatrixTests(TestCase):
         self.assertEqual(response.data["stock"][0]["reason"], "untracked")
         self.assertEqual(Order.objects.count(), 0)
         self.assertEqual(self.stock(), None)
+
+
+class RecordingLayer:
+    """Stand-in channel layer that records every group message."""
+
+    def __init__(self):
+        self.sent = []
+
+    async def group_send(self, group, message):
+        self.sent.append((group, message))
+
+
+class StockRealtimeBroadcastTests(TransactionTestCase):
+    """Every stock change reaches merchant screens with the committed count."""
+
+    def setUp(self):
+        self.layer = RecordingLayer()
+        layer_patch = patch("core.views.get_channel_layer", return_value=self.layer)
+        layer_patch.start()
+        self.addCleanup(layer_patch.stop)
+        self.customer = User.objects.create_user(
+            username="live-customer", password="test-password-123", role="customer")
+        self.merchant_user = User.objects.create_user(
+            username="live-merchant", password="test-password-123", role="merchant")
+        self.merchant = MerchantProfile.objects.create(
+            user=self.merchant_user, shop_name="Live Market", address="Live Street",
+            latitude=Decimal("31.949934"), longitude=Decimal("35.213710"), is_open=True)
+        self.captain_user = User.objects.create_user(
+            username="live-captain", password="test-password-123", role="captain")
+        self.captain = CaptainProfile.objects.create(
+            user=self.captain_user, approved=True, online=True, vehicle_type="motorcycle",
+            vehicle_model="Model", plate_number="12345", license_verified=True,
+            insurance_verified=True, digital_undertaking_signed_at="2026-01-01T00:00:00Z")
+        self.admin = User.objects.create_user(
+            username="live-admin", password="test-password-123", role="admin")
+        self.product = Product.objects.create(
+            merchant=self.merchant, name="Water", price=Decimal("3.50"),
+            available=True, quantity=9, low_stock_threshold=3)
+        self.client = APIClient()
+        self.client.force_authenticate(self.customer)
+
+    def client_for(self, user):
+        client = APIClient()
+        client.force_authenticate(user)
+        return client
+
+    def order(self, quantity, **headers):
+        return self.client.post("/api/orders/", {
+            "merchant": self.merchant.id,
+            "items": [{"product_id": self.product.id, "quantity": quantity}],
+            "dropoff_address": "Home",
+            "dropoff_latitude": 31.949934,
+            "dropoff_longitude": 35.213710,
+            "delivery_fee": "10.00",
+            "order_type": "store",
+        }, format="json", **headers)
+
+    def stock_events(self):
+        return [
+            (group, message["payload"])
+            for group, message in self.layer.sent
+            if message.get("payload", {}).get("type") == "stock.updated"
+        ]
+
+    def stock(self):
+        self.product.refresh_from_db()
+        return self.product.quantity
+
+    def test_order_two_of_nine_broadcasts_committed_seven(self):
+        response = self.order(2)
+        self.assertEqual(response.status_code, 201, response.data)
+        events = self.stock_events()
+        self.assertEqual({group for group, _ in events}, {
+            f"user_{self.merchant_user.id}", "role_admin"})
+        payload = events[0][1]
+        self.assertEqual(payload["product_id"], self.product.id)
+        self.assertEqual(payload["quantity"], 7)
+        self.assertEqual(payload["previous"], 9)
+        self.assertEqual(payload["delta"], -2)
+        self.assertEqual(payload["reason"], "order")
+        self.assertEqual(payload["order_id"], response.data["id"])
+        self.assertEqual(payload["stock_status"], "in")
+
+    def test_cancel_broadcasts_restored_nine_once(self):
+        order_id = self.order(2).data["id"]
+        self.layer.sent.clear()
+        response = self.client.post(
+            f"/api/orders/{order_id}/status/", {"status": "cancelled"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        payloads = [payload for _, payload in self.stock_events()]
+        self.assertEqual(len(payloads), 2)  # merchant socket + admin role group
+        for payload in payloads:
+            self.assertEqual(payload["quantity"], 9)
+            self.assertEqual(payload["previous"], 7)
+            self.assertEqual(payload["delta"], 2)
+            self.assertEqual(payload["reason"], "cancel")
+        self.layer.sent.clear()
+        again = self.client.post(
+            f"/api/orders/{order_id}/status/", {"status": "cancelled"}, format="json")
+        self.assertEqual(again.status_code, 400)
+        self.assertEqual(self.stock_events(), [])
+        self.assertEqual(self.stock(), 9)
+
+    def test_completion_keeps_the_reserved_count_and_stays_silent(self):
+        order_id = self.order(2).data["id"]
+        self.assertEqual(self.stock(), 7)
+        self.layer.sent.clear()
+        Order.objects.filter(pk=order_id).update(status="delivering", captain=self.captain)
+        response = self.client_for(self.captain_user).post(
+            f"/api/orders/{order_id}/status/", {"status": "completed"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self.stock(), 7)
+        self.assertEqual(self.stock_events(), [])
+
+    def test_rejected_order_never_broadcasts_a_change(self):
+        response = self.order(50)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.stock_events(), [])
+        self.assertEqual(self.stock(), 9)
+
+    def test_idempotent_resend_broadcasts_once(self):
+        first = self.order(2, **{"HTTP_IDEMPOTENCY_KEY": "live-key-1"})
+        self.assertEqual(first.status_code, 201)
+        self.layer.sent.clear()
+        again = self.order(2, **{"HTTP_IDEMPOTENCY_KEY": "live-key-1"})
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(self.stock(), 7)
+        self.assertEqual(self.stock_events(), [])
+
+    def test_manual_adjustment_broadcasts_new_count(self):
+        response = self.client_for(self.merchant_user).post(
+            f"/api/products/{self.product.id}/stock/", {"delta": 3}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        payloads = [payload for _, payload in self.stock_events()]
+        self.assertTrue(payloads)
+        self.assertTrue(all(payload["quantity"] == 12 for payload in payloads))
+        self.assertTrue(all(payload["delta"] == 3 for payload in payloads))
+        self.assertTrue(all(payload["reason"] == "manual" for payload in payloads))
+
+    def test_edit_form_quantity_change_broadcasts_new_count(self):
+        response = self.client_for(self.merchant_user).patch(
+            f"/api/products/{self.product.id}/", {"quantity": 5}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        payloads = [payload for _, payload in self.stock_events()]
+        self.assertTrue(payloads)
+        self.assertTrue(all(payload["quantity"] == 5 for payload in payloads))
+        self.assertTrue(all(payload["previous"] == 9 for payload in payloads))
 
 
 class ConcurrentLastUnitOrderTests(TransactionTestCase):
