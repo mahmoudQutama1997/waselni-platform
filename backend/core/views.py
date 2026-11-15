@@ -142,31 +142,33 @@ class StockUnavailable(Exception):
 
 
 def reserve_stock(items):
-    """Reserve tracked quantities with conditional updates (safe under concurrency).
+    """Reserve every requested line with conditional updates (safe under concurrency).
 
-    Every row is decremented only when the current count still covers the
-    requested quantity, so two concurrent orders cannot both take the last unit.
-    Raises StockUnavailable to roll back earlier rows of the same order.
+    A row is decremented only while the stored count still covers it, so two
+    concurrent orders cannot both take the last unit. A product without a stock
+    count cannot be sold at all: an unset count must never mean "sell anything",
+    otherwise the merchant's stock ceiling is not real. Raises StockUnavailable
+    so the caller's transaction rolls back earlier rows of the same order.
     """
     shortfalls = []
     for row in items or []:
-        if not row.get("stock_tracked"):
-            continue
         try:
             product_id, quantity = int(row.get("product_id")), int(row.get("quantity", 0))
         except (TypeError, ValueError):
             raise ValidationError({"items": "Invalid order item."})
         if quantity <= 0:
-            continue
-        updated = Product.objects.filter(pk=product_id, quantity__gte=quantity).update(
-            quantity=F("quantity") - quantity)
+            raise ValidationError({"items": "Quantity must be at least 1."})
+        updated = Product.objects.filter(
+            pk=product_id, quantity__isnull=False, quantity__gte=quantity
+        ).update(quantity=F("quantity") - quantity)
         if not updated:
             product = Product.objects.filter(pk=product_id).only("name", "quantity").first()
             shortfalls.append({
                 "product_id": product_id,
                 "name": row.get("name") or (product.name if product else ""),
-                "available": product.quantity if product else 0,
+                "available": product.quantity if product and product.quantity is not None else 0,
                 "requested": quantity,
+                "reason": "untracked" if product and product.quantity is None else "shortage",
             })
     if shortfalls:
         raise StockUnavailable(shortfalls)
@@ -830,9 +832,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                        .filter(pk=pk, merchant__user=request.user).first())
             if product is None:
                 raise NotFound("Product not found.")
-            if product.quantity is None:
-                return Response({"detail": "This product does not track stock."}, status=400)
-            previous = product.quantity
+            # An unset count starts at zero: the first tap turns tracking on
+            # instead of failing, so legacy rows can be stocked from the portal.
+            previous = 0 if product.quantity is None else product.quantity
             product.quantity = max(0, min(previous + delta, 1000000))
             product.save(update_fields=["quantity"])
         notify_stock_changes({product.id: previous}, [product])
@@ -894,7 +896,13 @@ class OrderViewSet(viewsets.ModelViewSet):
                 "products": exc.shortfalls, "message": names,
             })
             first = exc.shortfalls[0]
-            raise ValidationError({"items": f"Only {first['available']} of {first['name']} are available."})
+            if first.get("reason") == "untracked":
+                message = f"{first['name']} has no stock count yet and cannot be sold."
+            else:
+                message = f"Only {first['available']} of {first['name']} are available."
+            # The structured list lets the storefront show the product names in
+            # the customer's own language instead of the English API sentence.
+            raise ValidationError({"items": message, "stock": exc.shortfalls})
         if duplicate:
             return Response(self.get_serializer(duplicate).data, status=200)
         if created:

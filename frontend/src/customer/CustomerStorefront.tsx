@@ -77,6 +77,8 @@ type Copy = {
   cartStockAlert: string;
   cartStockClamped: string;
   maxReached: string;
+  stockShortfall: string;
+  stockUntracked: string;
 };
 
 const copy: Record<Props['lang'], Copy> = {
@@ -139,7 +141,9 @@ const copy: Record<Props['lang'], Copy> = {
     itemSoldOut: 'نفدت الكمية من هذا المنتج.',
     cartStockAlert: 'نفدت الكمية من بعض منتجات سلتك وتم حذفها:',
     cartStockClamped: 'تم تعديل الكميات حسب المتوفر في المتجر:',
-    maxReached: 'وصلت للحد الأقصى المتوفر من هذا المنتج.'
+    maxReached: 'وصلت للحد الأقصى المتوفر من هذا المنتج.',
+    stockShortfall: 'الكمية غير كافية: {name} — المتوفر {count} فقط.',
+    stockUntracked: '{name} غير متاح للطلب حتى يحدد المتجر كميته.'
   },
 
   en: {
@@ -201,7 +205,9 @@ const copy: Record<Props['lang'], Copy> = {
     itemSoldOut: 'This item is out of stock.',
     cartStockAlert: 'Some items sold out and were removed from your cart:',
     cartStockClamped: 'Quantities were adjusted to the available stock:',
-    maxReached: 'You reached the maximum available quantity for this item.'
+    maxReached: 'You reached the maximum available quantity for this item.',
+    stockShortfall: 'Not enough stock: {name} — only {count} left.',
+    stockUntracked: '{name} cannot be ordered until the store sets its quantity.'
   },
 
   he: {
@@ -263,7 +269,9 @@ const copy: Record<Props['lang'], Copy> = {
     itemSoldOut: 'הפריט אזל מהמלאי.',
     cartStockAlert: 'חלק מהפריטים אזלו והוסרו מהסל:',
     cartStockClamped: 'הכמויות עודכנו לפי המלאי הזמין:',
-    maxReached: 'הגעתם לכמות המרבית הזמינה של פריט זה.'
+    maxReached: 'הגעתם לכמות המרבית הזמינה של פריט זה.',
+    stockShortfall: 'אין מספיק מלאי: {name} — נותרו {count} בלבד.',
+    stockUntracked: 'לא ניתן להזמין את {name} עד שהחנות תגדיר כמות.'
   }
 };
 
@@ -298,10 +306,37 @@ const stockState = (product: Product): StockState =>
     : 'untracked');
 
 const stockLimit = (product: Product): number | null =>
-  typeof product.quantity === 'number' ? Math.max(0, product.quantity) : null;
+  typeof product.quantity === 'number' ? Math.max(0, product.quantity) : 0;
 
+// An unset count is not "unlimited": the backend refuses to sell it, so the
+// storefront must show it as unavailable instead of letting the customer add it.
 const isSoldOut = (product: Product) =>
-  product.available === false || stockState(product) === 'out';
+  product.available === false ||
+  stockState(product) === 'out' ||
+  stockState(product) === 'untracked';
+
+type StockShortfall = {
+  product_id: number;
+  name: string;
+  available: number;
+  requested: number;
+  reason?: 'shortage' | 'untracked';
+};
+
+const stockErrorMessage = (
+  payload: unknown,
+  t: Copy
+): string | null => {
+  const stock = (payload as { stock?: StockShortfall[] } | null)?.stock;
+  if (!Array.isArray(stock) || !stock.length) return null;
+  return stock
+    .map(row =>
+      (row.reason === 'untracked' ? t.stockUntracked : t.stockShortfall)
+        .replace('{name}', row.name)
+        .replace('{count}', String(row.available))
+    )
+    .join(' — ');
+};
 
 
 const readCart = (): CartLine[] => {
@@ -612,7 +647,7 @@ export default function CustomerStorefront({ lang }: Props) {
 
     if (isSoldOut(product)) {
       setNotice('');
-      setError(t.itemSoldOut);
+      setError(`${product.name}: ${t.itemSoldOut}`);
       return;
     }
 
@@ -622,7 +657,7 @@ export default function CustomerStorefront({ lang }: Props) {
 
     if (limit != null && inCart >= limit) {
       setNotice('');
-      setError(t.maxReached);
+      setError(`${product.name}: ${t.maxReached}`);
       return;
     }
 
@@ -699,12 +734,14 @@ export default function CustomerStorefront({ lang }: Props) {
       globalThis.crypto?.randomUUID?.() ||
       `waselni-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+    const merchantId = cart[0].product.merchant;
+
     try {
       const result = await api('/orders/', {
         method: 'POST',
         headers: { 'Idempotency-Key': key },
         body: JSON.stringify({
-          merchant: cart[0].product.merchant,
+          merchant: merchantId,
           items: cart.map(line => ({
             product_id: line.product.id,
             quantity: line.quantity
@@ -728,10 +765,17 @@ export default function CustomerStorefront({ lang }: Props) {
 
       const latest = await api('/orders/');
       setOrders(rows<Order>(latest).slice(0, 3));
+      // The order just consumed stock; refresh the shelf so the remaining
+      // count drops immediately instead of waiting for the next focus event.
+      void api(`/products/?merchant=${merchantId}`)
+        .then(data => setProducts(rows<Product>(data).filter(product => product.available !== false)))
+        .catch(() => undefined);
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : t.orderError
+      const stockMessage = stockErrorMessage(
+        e instanceof Error ? (e as Error & { data?: unknown }).data : null,
+        t
       );
+      setError(stockMessage || (e instanceof Error ? e.message : t.orderError));
     } finally {
       setSubmitting(false);
     }

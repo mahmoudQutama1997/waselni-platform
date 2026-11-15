@@ -30,7 +30,8 @@ class OrderCoordinateTests(TestCase):
             is_open=True,
         )
         self.product = Product.objects.create(
-            merchant=self.merchant, name="Water", price=Decimal("3.50"), available=True
+            merchant=self.merchant, name="Water", price=Decimal("3.50"), available=True,
+            quantity=50
         )
         self.client = APIClient()
         self.client.force_authenticate(self.customer)

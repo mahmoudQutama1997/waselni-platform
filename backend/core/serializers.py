@@ -153,7 +153,16 @@ class ProductSerializer(serializers.ModelSerializer):
     def validate_image(self, value):
         return validate_image_upload(value)
 
+    def create(self, validated_data):
+        # A product is only sellable against a real count. Omitting the field
+        # used to leave quantity NULL, which meant "unlimited" at order time.
+        if validated_data.get("quantity") is None:
+            validated_data["quantity"] = 0
+        return super().create(validated_data)
+
     def update(self, instance, validated_data):
+        if "quantity" in validated_data and validated_data["quantity"] is None:
+            validated_data["quantity"] = 0
         previous = instance.image.name if instance.image and "image" in validated_data else ""
         instance = super().update(instance, validated_data)
         _delete_replaced_upload(instance, "image", previous)

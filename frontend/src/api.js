@@ -109,7 +109,14 @@ export async function api(path, options={}, retried=false){
     clearAuth();
   }
   const data = await decodeResponse(res);
-  if (!res.ok) throw new Error(errorMessage(data, res.status));
+  if (!res.ok) {
+    const error = new Error(errorMessage(data, res.status));
+    // Structured validation payloads (e.g. stock shortfalls) let screens show a
+    // localized message instead of the raw English API sentence.
+    error.data = data;
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 

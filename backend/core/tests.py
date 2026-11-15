@@ -188,7 +188,7 @@ class StoreDeliveryPricingTests(TestCase):
             latitude=Decimal("32.2211"), longitude=Decimal("35.2544"),
         )
         self.product = Product.objects.create(
-            merchant=self.store, name="Test item", price=Decimal("8.00")
+            merchant=self.store, name="Test item", price=Decimal("8.00"), quantity=50
         )
         self.client = APIClient()
         self.client.force_authenticate(self.customer)
