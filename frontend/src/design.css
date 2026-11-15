@@ -1377,3 +1377,13 @@ button.secondary.danger { border-color: #f0d3d7; background: #fff6f7; color: var
   .notif-dropdown { max-height: 65vh; }
   .tracking-meta { align-items: flex-start; flex-direction: column; }
 }
+
+.order-activity { border-top: 1px solid var(--w-line); padding-top: 8px; }
+.order-activity summary { color: var(--w-purple); cursor: pointer; font-size: 12px; font-weight: 800; }
+.order-activity ol { display: grid; gap: 8px; margin: 10px 0 0; padding-inline-start: 20px; }
+.order-activity li { display: grid; gap: 3px; color: var(--w-ink); font-size: 11px; }
+.order-activity li span, .order-activity li small, .order-activity time { color: var(--w-muted); font-size: 10px; }
+.order-ratings { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.order-rating { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--w-line); border-radius: 13px; background: #fcfbfe; }
+.order-rating label { display: grid; gap: 5px; color: var(--w-muted); font-size: 11px; font-weight: 700; }
+.order-rating select, .order-rating textarea { width: 100%; }

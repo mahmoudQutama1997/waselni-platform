@@ -1,11 +1,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import (ProductViewSet, OrderViewSet, SettlementViewSet, DelayReportViewSet,
+from .views import (ProductViewSet, OrderViewSet, RatingViewSet, SettlementViewSet, DelayReportViewSet,
                     SupportTicketViewSet, DashboardSummaryView, MerchantViewSet, MerchantProfileSelfView, CaptainSelfView, AdminOperationsView, AdminUsersView, AdminUserDetailView, FinanceAccessAuditView, AdminUserSubscriptionView, AdminSubscriptionPaymentView, AdminSubscriptionsView, AdminCaptainApprovalView, ChangePasswordView, AccountProfileView, AdminStoresView, MerchantReportsView, NotificationListView, NotificationReadView)
 router = DefaultRouter()
 router.register("merchants", MerchantViewSet, basename="merchant")
 router.register("products", ProductViewSet, basename="product")
 router.register("orders", OrderViewSet, basename="order")
+router.register("ratings", RatingViewSet, basename="rating")
 router.register("settlements", SettlementViewSet, basename="settlement")
 router.register("delay-reports", DelayReportViewSet, basename="delay-report")
 router.register("support-tickets", SupportTicketViewSet, basename="support-ticket")

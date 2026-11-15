@@ -74,9 +74,21 @@ const COPY = {
 }
 
 const STATUS_LABELS = {
-  ar: { picked_up: 'تم الاستلام', delivering: 'قيد التوصيل', completed: 'مكتمل', preparing: 'قيد التجهيز' },
-  he: { picked_up: 'נאסף', delivering: 'במשלוח', completed: 'הושלם', preparing: 'בהכנה' },
-  en: { picked_up: 'Picked up', delivering: 'Delivering', completed: 'Completed', preparing: 'Preparing' },
+  ar: {
+    new: 'جديد', accepted: 'مقبول', preparing: 'قيد التجهيز', ready: 'جاهز للاستلام',
+    assigned: 'تم تعيين كابتن', picked_up: 'تم الاستلام', delivering: 'قيد التوصيل',
+    awaiting_confirmation: 'بانتظار تأكيد الزبون', completed: 'مكتمل', cancelled: 'ملغي',
+  },
+  he: {
+    new: 'חדש', accepted: 'אושר', preparing: 'בהכנה', ready: 'מוכן לאיסוף',
+    assigned: 'שליח שובץ', picked_up: 'נאסף', delivering: 'במשלוח',
+    awaiting_confirmation: 'ממתין לאישור הלקוח', completed: 'הושלם', cancelled: 'בוטל',
+  },
+  en: {
+    new: 'New', accepted: 'Accepted', preparing: 'Preparing', ready: 'Ready for pickup',
+    assigned: 'Captain assigned', picked_up: 'Picked up', delivering: 'Delivering',
+    awaiting_confirmation: 'Awaiting customer confirmation', completed: 'Completed', cancelled: 'Cancelled',
+  },
 }
 
 function describe(notification, lang, role) {

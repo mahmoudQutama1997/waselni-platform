@@ -170,7 +170,18 @@ class ProductSerializer(serializers.ModelSerializer):
         return instance
 
 
+class OrderActivitySerializer(serializers.ModelSerializer):
+    actor_id = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = OrderActivity
+        fields = ["id", "event", "from_status", "to_status", "actor_id", "actor_name", "created_at"]
+        read_only_fields = fields
+
+
 class OrderSerializer(serializers.ModelSerializer):
+    activities = OrderActivitySerializer(many=True, read_only=True)
+    my_ratings = serializers.SerializerMethodField()
     customer_name = serializers.CharField(source="customer.get_full_name", read_only=True)
     customer_profile_image = serializers.SerializerMethodField()
     captain_profile_image = serializers.SerializerMethodField()
@@ -179,6 +190,12 @@ class OrderSerializer(serializers.ModelSerializer):
     captain_location_updated_at = serializers.SerializerMethodField()
     merchant_name = serializers.CharField(source="merchant.shop_name", read_only=True)
     captain_name = serializers.CharField(source="captain.user.get_full_name", read_only=True)
+    captain_rating = serializers.DecimalField(
+        source="captain.rating", max_digits=3, decimal_places=2, read_only=True, allow_null=True,
+    )
+    merchant_rating = serializers.DecimalField(
+        source="merchant.rating", max_digits=3, decimal_places=2, read_only=True, allow_null=True,
+    )
     merchant = serializers.PrimaryKeyRelatedField(queryset=MerchantProfile.objects.all(), required=False, allow_null=True)
     items = serializers.ListField(child=serializers.DictField(), required=False)
     def get_customer_profile_image(self, obj):
@@ -211,6 +228,16 @@ class OrderSerializer(serializers.ModelSerializer):
             "ready_at", "captain_delivered_at", "completed_at", "completed_by",
             "completed_by_name", "completion_method", "created_at", "updated_at", "total", "subtotal",
             "request_key",
+        ]
+
+    def get_my_ratings(self, obj):
+        request = self.context.get("request")
+        if request is None or not request.user.is_authenticated:
+            return []
+        return [
+            {"target_type": rating.target_type, "score": rating.score, "comment": rating.comment}
+            for rating in obj.ratings.all()
+            if rating.author_id == request.user.id
         ]
 
     def to_internal_value(self, data):
@@ -316,3 +343,15 @@ class NotificationSerializer(serializers.ModelSerializer):
         model = Notification
         fields = "__all__"
         read_only_fields = ["user", "event", "order", "payload", "created_at"]
+
+
+class RatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Rating
+        fields = ["id", "order", "target_type", "score", "comment", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+    def validate_score(self, value):
+        if value < 1 or value > 5:
+            raise serializers.ValidationError("Score must be between 1 and 5.")
+        return value

@@ -14,6 +14,8 @@ from .models import (
     CaptainProfile,
     MerchantProfile,
     Order,
+    OrderActivity,
+    Rating,
     SupportTicket,
 )
 from .services.order_completion import complete_expired_order_confirmations
@@ -94,6 +96,113 @@ class OrderCompletionAndCashLedgerTests(TestCase):
         )
         self.assertEqual(duplicate.status_code, 400)
         self.assertEqual(CashSettlement.objects.filter(order=order).count(), 1)
+
+    def test_order_activity_records_status_actor_and_completion_time(self):
+        order = self.make_order()
+        self.client.force_authenticate(self.captain_user)
+        delivered = self.client.post(
+            f"/api/orders/{order.id}/status/",
+            {"status": "awaiting_confirmation"},
+            format="json",
+        )
+        self.assertEqual(delivered.status_code, 200, delivered.data)
+        self.client.force_authenticate(self.customer)
+        completed = self.client.post(
+            f"/api/orders/{order.id}/status/",
+            {"status": "completed"},
+            format="json",
+        )
+        self.assertEqual(completed.status_code, 200, completed.data)
+        activities = OrderActivity.objects.filter(order=order).order_by("created_at", "id")
+        self.assertEqual(activities.count(), 2)
+        self.assertEqual(activities[0].from_status, "delivering")
+        self.assertEqual(activities[0].to_status, "awaiting_confirmation")
+        self.assertEqual(activities[0].actor_id, self.captain_user.id)
+        self.assertEqual(activities[1].event, "completed")
+        self.assertEqual(activities[1].actor_id, self.customer.id)
+        self.assertEqual(completed.data["activities"][-1]["actor_id"], self.customer.id)
+        self.assertEqual(completed.data["activities"][-1]["actor_name"], self.customer.get_username())
+
+    def test_customer_can_rate_only_completed_order_participants_and_update_rating(self):
+        order = self.make_order(status="completed")
+        self.client.force_authenticate(self.customer)
+        payload = {
+            "order": order.id,
+            "target_type": "captain",
+            "score": 4,
+            "comment": "Arrived safely.",
+        }
+        created = self.client.post("/api/ratings/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.captain.refresh_from_db()
+        self.assertEqual(self.captain.rating, Decimal("4.00"))
+
+        updated = self.client.post(
+            "/api/ratings/",
+            {**payload, "score": 5, "comment": "Great service."},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(Rating.objects.filter(order=order, target_type="captain").count(), 1)
+        self.assertEqual(updated.data["score"], 5)
+
+        merchant_rating = self.client.post(
+            "/api/ratings/",
+            {"order": order.id, "target_type": "merchant", "score": 4, "comment": "Fresh food."},
+            format="json",
+        )
+        self.assertEqual(merchant_rating.status_code, 201, merchant_rating.data)
+        self.merchant.refresh_from_db()
+        self.assertEqual(self.merchant.rating, Decimal("4.00"))
+
+        order_ratings = self.client.get("/api/orders/")
+        self.assertEqual(order_ratings.status_code, 200)
+        self.assertEqual(
+            {rating["target_type"]: rating["score"] for rating in order_ratings.data[0]["my_ratings"]},
+            {"captain": 5, "merchant": 4},
+        )
+        self.assertEqual(order_ratings.data[0]["captain_rating"], "5.00")
+        self.assertEqual(order_ratings.data[0]["merchant_rating"], "4.00")
+
+        self.client.force_authenticate(self.captain_user)
+        captain_reviews = self.client.get("/api/ratings/")
+        self.assertEqual(captain_reviews.status_code, 200)
+        self.assertEqual([row["target_type"] for row in captain_reviews.data], ["captain"])
+
+        self.client.force_authenticate(self.merchant_user)
+        merchant_reviews = self.client.get("/api/ratings/")
+        self.assertEqual(merchant_reviews.status_code, 200)
+        self.assertEqual([row["target_type"] for row in merchant_reviews.data], ["merchant"])
+
+    def test_customer_cannot_rate_incomplete_or_unrelated_order_or_invalid_score(self):
+        incomplete = self.make_order(status="awaiting_confirmation")
+        self.client.force_authenticate(self.customer)
+        not_completed = self.client.post(
+            "/api/ratings/",
+            {"order": incomplete.id, "target_type": "captain", "score": 5},
+            format="json",
+        )
+        self.assertEqual(not_completed.status_code, 400)
+
+        other_customer = get_user_model().objects.create_user(
+            username="rating-other-customer", password="password-123"
+        )
+        unrelated = self.make_order(status="completed")
+        unrelated.customer = other_customer
+        unrelated.save(update_fields=["customer"])
+        forbidden = self.client.post(
+            "/api/ratings/",
+            {"order": unrelated.id, "target_type": "captain", "score": 5},
+            format="json",
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+        invalid_score = self.client.post(
+            "/api/ratings/",
+            {"order": incomplete.id, "target_type": "captain", "score": 6},
+            format="json",
+        )
+        self.assertEqual(invalid_score.status_code, 400)
 
     def test_captain_jwt_login_lists_and_updates_own_order(self):
         order = self.make_order()

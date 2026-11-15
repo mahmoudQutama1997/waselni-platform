@@ -91,3 +91,46 @@ Object.assign(he,{shipping:"משלוח חבילות"});
 Object.assign(ar,{catalogShort:"المنتجات",reportsShort:"التقارير",settlementsShort:"التسويات",accountShort:"حسابي"});
 Object.assign(en,{catalogShort:"Products",reportsShort:"Reports",settlementsShort:"Settlements",accountShort:"Account"});
 Object.assign(he,{catalogShort:"מוצרים",reportsShort:"דוחות",settlementsShort:"התחשבנויות",accountShort:"חשבון"});
+
+Object.assign(ar,{
+  exportCsv:"تصدير CSV",completedAt:"وقت الإكمال",orderHistory:"السجل الزمني للطلب",
+  orderHistoryNotAvailable:"لا يتوفر سجل تفصيلي لهذا الطلب من قبل تفعيل سجل الأحداث.",
+  activity_created:"تم إنشاء الطلب",activity_accepted:"قبل التاجر الطلب",
+  activity_captain_arrived:"وصل الكابتن إلى المتجر",activity_assigned:"تم تعيين الكابتن",
+  activity_status_changed:"تغيرت حالة الطلب",activity_completed:"اكتمل الطلب",
+  rateCaptain:"قيّم الكابتن",rateMerchant:"قيّم المتجر",ratingScore:"التقييم",
+  ratingComment:"تعليق اختياري",submitRating:"حفظ التقييم",updateRating:"تحديث التقييم",
+  ratingSaved:"تم حفظ تقييمك",customerFeedback:"آراء العملاء",averageRating:"متوسط التقييم",noReviews:"لا توجد تقييمات بعد",csvOrderId:"رقم الطلب",csvMerchant:"المتجر",
+  csvCustomer:"الزبون",csvCaptain:"الكابتن",csvStatus:"الحالة",csvTotal:"الإجمالي",
+  csvDeliveryFee:"أجرة التوصيل",csvAmount:"المبلغ",csvSettled:"المسوّى",
+  csvOutstanding:"المتبقي",csvReference:"رقم العملية",csvRecordedBy:"الموظف",
+  csvDate:"التاريخ",csvNotes:"ملاحظات"
+});
+Object.assign(en,{
+  exportCsv:"Export CSV",completedAt:"Completed at",orderHistory:"Order activity",
+  orderHistoryNotAvailable:"Detailed activity is unavailable for this order from before activity logging was enabled.",
+  activity_created:"Order created",activity_accepted:"Order accepted by merchant",
+  activity_captain_arrived:"Captain arrived at store",activity_assigned:"Captain assigned",
+  activity_status_changed:"Order status changed",activity_completed:"Order completed",
+  rateCaptain:"Rate captain",rateMerchant:"Rate store",ratingScore:"Rating",
+  ratingComment:"Optional comment",submitRating:"Save rating",updateRating:"Update rating",
+  ratingSaved:"Your rating was saved",customerFeedback:"Customer reviews",averageRating:"Average rating",noReviews:"No reviews yet",csvOrderId:"Order ID",csvMerchant:"Store",
+  csvCustomer:"Customer",csvCaptain:"Captain",csvStatus:"Status",csvTotal:"Total",
+  csvDeliveryFee:"Delivery fee",csvAmount:"Amount",csvSettled:"Settled",
+  csvOutstanding:"Outstanding",csvReference:"Transaction reference",csvRecordedBy:"Recorded by",
+  csvDate:"Date",csvNotes:"Notes"
+});
+Object.assign(he,{
+  exportCsv:"ייצוא CSV",completedAt:"הושלם בתאריך",orderHistory:"פעילות ההזמנה",
+  orderHistoryNotAvailable:"פעילות מפורטת אינה זמינה להזמנה זו מלפני הפעלת רישום הפעילות.",
+  activity_created:"ההזמנה נוצרה",activity_accepted:"ההזמנה אושרה בחנות",
+  activity_captain_arrived:"השליח הגיע לחנות",activity_assigned:"השליח שובץ",
+  activity_status_changed:"מצב ההזמנה השתנה",activity_completed:"ההזמנה הושלמה",
+  rateCaptain:"דירוג השליח",rateMerchant:"דירוג החנות",ratingScore:"דירוג",
+  ratingComment:"הערה (לא חובה)",submitRating:"שמירת דירוג",updateRating:"עדכון דירוג",
+  ratingSaved:"הדירוג נשמר",customerFeedback:"ביקורות לקוחות",averageRating:"דירוג ממוצע",noReviews:"אין עדיין ביקורות",csvOrderId:"מזהה הזמנה",csvMerchant:"חנות",
+  csvCustomer:"לקוח",csvCaptain:"שליח",csvStatus:"מצב",csvTotal:"סה״כ",
+  csvDeliveryFee:"דמי משלוח",csvAmount:"סכום",csvSettled:"הוסדר",
+  csvOutstanding:"יתרה",csvReference:"אסמכתה",csvRecordedBy:"נרשם על ידי",
+  csvDate:"תאריך",csvNotes:"הערות"
+});

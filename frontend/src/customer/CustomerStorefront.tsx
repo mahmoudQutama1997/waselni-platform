@@ -41,6 +41,7 @@ type Copy = {
   remove: string;
   open: string;
   closed: string;
+  averageRating: string;
   category: string;
   storeHint: string;
   cartHint: string;
@@ -62,6 +63,8 @@ type Copy = {
   viewCart: string;
   orderStatus: string;
   confirmReceipt: string;
+  completedAt: string;
+  receiptConfirmed: string;
   paymentStatus: string;
   cashStatus: string;
   onlineNotIntegrated: string;
@@ -115,6 +118,7 @@ const copy: Record<Props['lang'], Copy> = {
     remove: 'حذف',
     open: 'مفتوح',
     closed: 'مغلق',
+    averageRating: 'متوسط التقييم',
     category: 'التصنيف',
     storeHint: 'اختر متجراً لعرض منتجاته',
     cartHint: 'يمكنك الطلب من متجر واحد في كل طلب.',
@@ -131,6 +135,8 @@ const copy: Record<Props['lang'], Copy> = {
     viewCart: 'عرض السلة',
     orderStatus: 'حالة الطلب',
     confirmReceipt: 'تأكيد استلام الطلب',
+    completedAt: 'وقت الإكمال',
+    receiptConfirmed: 'تم تأكيد استلام الطلب.',
     paymentStatus: 'حالة الدفع',
     cashStatus: 'الدفع نقداً للكابتن عند التسليم',
     onlineNotIntegrated: 'الدفع الإلكتروني غير مفعّل؛ لم يتم تأكيد الدفع',
@@ -183,6 +189,7 @@ const copy: Record<Props['lang'], Copy> = {
     remove: 'Remove',
     open: 'Open',
     closed: 'Closed',
+    averageRating: 'Average rating',
     category: 'Category',
     storeHint: 'Choose a store to explore its products',
     cartHint: 'Orders can contain products from one store only.',
@@ -199,6 +206,8 @@ const copy: Record<Props['lang'], Copy> = {
     viewCart: 'View cart',
     orderStatus: 'Order status',
     confirmReceipt: 'Confirm order receipt',
+    completedAt: 'Completed at',
+    receiptConfirmed: 'Order receipt confirmed.',
     paymentStatus: 'Payment status',
     cashStatus: 'Cash payable to the captain on delivery',
     onlineNotIntegrated: 'Online payment is not enabled; payment has not been verified',
@@ -251,6 +260,7 @@ const copy: Record<Props['lang'], Copy> = {
     remove: 'הסרה',
     open: 'פתוח',
     closed: 'סגור',
+    averageRating: 'דירוג ממוצע',
     category: 'קטגוריה',
     storeHint: 'בחרו חנות כדי לצפות במוצרים',
     cartHint: 'ניתן להזמין ממקום אחד בכל הזמנה.',
@@ -267,6 +277,8 @@ const copy: Record<Props['lang'], Copy> = {
     viewCart: 'לצפייה בסל',
     orderStatus: 'מצב הזמנה',
     confirmReceipt: 'אישור קבלת ההזמנה',
+    completedAt: 'הושלם בתאריך',
+    receiptConfirmed: 'קבלת ההזמנה אושרה.',
     paymentStatus: 'מצב התשלום',
     cashStatus: 'תשלום במזומן לשליח בעת המסירה',
     onlineNotIntegrated: 'תשלום מקוון אינו פעיל; התשלום לא אומת',
@@ -444,6 +456,9 @@ export default function CustomerStorefront({ lang }: Props) {
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState('');
+  const [ordersReload, setOrdersReload] = useState(0);
   const [selectedMerchant, setSelectedMerchant] = useState<number | null>(null);
   const [cart, setCart] = useState<CartLine[]>(readCart);
   const [search, setSearch] = useState('');
@@ -478,9 +493,17 @@ export default function CustomerStorefront({ lang }: Props) {
 
     const loadOrders = () => api('/orders/')
       .then(data => {
-        if (alive) setOrders(rows<Order>(data).slice(0, 3));
+        if (alive) {
+          setOrders(rows<Order>(data).slice(0, 3));
+          setOrdersError('');
+        }
       })
-      .catch(() => undefined);
+      .catch(e => {
+        if (alive) setOrdersError(e.message || t.orderError);
+      })
+      .finally(() => {
+        if (alive) setOrdersLoading(false);
+      });
     loadOrders();
     const orderTimer = setInterval(loadOrders, 5000);
 
@@ -488,7 +511,7 @@ export default function CustomerStorefront({ lang }: Props) {
       alive = false;
       clearInterval(orderTimer);
     };
-  }, [t.orderError]);
+  }, [t.orderError, ordersReload]);
 
   async function confirmOrderReceipt(orderId: number) {
     if (confirmingOrderId) return;
@@ -499,6 +522,7 @@ export default function CustomerStorefront({ lang }: Props) {
         body: JSON.stringify({ status: 'completed' })
       });
       setOrders(rows<Order>(await api('/orders/')).slice(0, 3));
+      setNotice(t.receiptConfirmed);
     } catch (e) {
       setError(e instanceof Error ? e.message : t.orderError);
     } finally {
@@ -946,6 +970,7 @@ export default function CustomerStorefront({ lang }: Props) {
                     <span className="customer-v2-store-info">
                       <b>{merchant.shop_name}</b>
                       <small>{merchant.category || t.category}</small>
+                      {merchant.rating != null && <small>★ {merchant.rating} / 5 · {t.averageRating}</small>}
                       <em className={merchant.is_open ? 'is-open' : 'is-closed'}>
                         {merchant.is_open ? t.open : t.closed}
                       </em>
@@ -1068,7 +1093,11 @@ export default function CustomerStorefront({ lang }: Props) {
               </div>
             </div>
 
-            {orders.length ? (
+            {ordersLoading ? (
+              <p className="customer-v2-loading">{t.loading}</p>
+            ) : ordersError ? (
+              <p className="error">{ordersError} <button type="button" className="secondary" onClick={() => { setOrdersLoading(true); setOrdersReload(value => value + 1); }}>{t.retry}</button></p>
+            ) : orders.length ? (
               <div className="customer-v2-order-list">
                 {orders.map(order => (
                   <div className="customer-v2-order" key={order.id}>
@@ -1086,6 +1115,7 @@ export default function CustomerStorefront({ lang }: Props) {
                     </span>
                     <strong>{money(order.total)}</strong>
                     <small>{t.paymentStatus}: {order.payment_method === 'cash' ? t.cashStatus : t.onlineNotIntegrated}</small>
+                    {order.completed_at && <small>{t.completedAt}: {new Date(order.completed_at).toLocaleString(lang)}</small>}
                     {order.status === 'awaiting_confirmation' && (
                       <button
                         type="button"

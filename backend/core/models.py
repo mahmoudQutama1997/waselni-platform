@@ -132,6 +132,27 @@ class Order(models.Model):
             models.UniqueConstraint(fields=["customer", "request_key"], name="uniq_order_customer_request_key"),
         ]
 
+
+class OrderActivity(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="activities")
+    event = models.CharField(max_length=32)
+    from_status = models.CharField(max_length=24, blank=True)
+    to_status = models.CharField(max_length=24, blank=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="order_activities",
+    )
+    actor_name = models.CharField(max_length=150)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["order", "created_at"], name="order_activity_time")]
+
+
 class CashSettlement(models.Model):
     order = models.OneToOneField(Order, on_delete=models.PROTECT, related_name="settlement")
     merchant = models.ForeignKey(MerchantProfile, on_delete=models.PROTECT)

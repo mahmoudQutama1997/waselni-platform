@@ -6,6 +6,7 @@ from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from core.models import CashSettlement, Order, SupportTicket
+from core.services.order_activity import record_order_activity
 
 
 CONFIRMATION_GRACE_PERIOD = timedelta(hours=12)
@@ -16,6 +17,7 @@ def complete_order(order, *, completed_by, method, completed_at=None):
     if order.status != "awaiting_confirmation":
         return False
 
+    previous_status = order.status
     completed_at = completed_at or timezone.now()
     order.status = "completed"
     order.completed_at = completed_at
@@ -29,6 +31,13 @@ def complete_order(order, *, completed_by, method, completed_at=None):
         "status", "completed_at", "completed_by", "completed_by_name",
         "completion_method", "updated_at",
     ])
+    record_order_activity(
+        order,
+        "completed",
+        actor=completed_by,
+        from_status=previous_status,
+        to_status=order.status,
+    )
 
     if (
         order.order_type == "store"

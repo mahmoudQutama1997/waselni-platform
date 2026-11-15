@@ -11,7 +11,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
 from django.db import connection, transaction
-from django.db.models import Sum, Q, F
+from django.db.models import Avg, Sum, Q, F
 from django.http import FileResponse
 from django.utils import timezone
 from rest_framework import generics, viewsets
@@ -28,6 +28,7 @@ from .services.eligibility import (
 )
 from .validators import validate_document_upload, validate_image_upload
 from .services.order_completion import complete_order
+from .services.order_activity import record_order_activity
 from .storage import WaselniMediaStorage, is_captain_document
 
 
@@ -794,6 +795,7 @@ def captain_status_row(profile, elig):
     return {
         "id": profile.id, "captain_profile_id": profile.id, "user_id": user.id,
         "username": user.username, "name": user.get_full_name() or user.username,
+        "rating": str(profile.rating),
         "vehicle_type": profile.vehicle_type, "vehicle_model": profile.vehicle_model,
         "plate_number": profile.plate_number, "permit_type": profile.permit_type,
         "checkpoint_badge": profile.checkpoint_badge,
@@ -923,7 +925,9 @@ class ProductViewSet(viewsets.ModelViewSet):
 class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Order.objects.select_related("customer", "merchant__user", "captain__user").all()
+    queryset = Order.objects.select_related("customer", "merchant__user", "captain__user").prefetch_related(
+        "activities", "ratings"
+    )
     http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self):
@@ -973,6 +977,10 @@ class OrderViewSet(viewsets.ModelViewSet):
                     else:
                         order = serializer.save(customer=request.user)
                         created = True
+                    if created:
+                        record_order_activity(
+                            order, "created", actor=request.user, to_status=order.status,
+                        )
         except StockUnavailable as exc:
             names = ", ".join(f"{row['name']} ({row['available']})" for row in exc.shortfalls)
             notify_user_ids({request.user.id}, "stock.out", payload={
@@ -1074,13 +1082,18 @@ class OrderViewSet(viewsets.ModelViewSet):
             distance_km=Decimal(str(distance)).quantize(Decimal("0.01")), delivery_fee=fee,
             checkpoint_fee=checkpoint_fee, total=total, requires_checkpoint=checkpoint,
             payment_method=data.get("payment_method", "cash") if data.get("payment_method") in ("cash", "online") else "cash")
-        if request_key:
-            order, created = Order.objects.get_or_create(
-                customer=request.user, request_key=request_key, defaults=order_defaults
-            )
-        else:
-            order = Order.objects.create(customer=request.user, **order_defaults)
-            created = True
+        with transaction.atomic():
+            if request_key:
+                order, created = Order.objects.get_or_create(
+                    customer=request.user, request_key=request_key, defaults=order_defaults
+                )
+            else:
+                order = Order.objects.create(customer=request.user, **order_defaults)
+                created = True
+            if created:
+                record_order_activity(
+                    order, "created", actor=request.user, to_status=order.status,
+                )
         if created:
             publish_order_event(order, "order.created")
             notify_order_created(order)
@@ -1120,6 +1133,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.status = "accepted"
             order.accepted_at = timezone.now()
             order.save()
+            record_order_activity(order, "accepted", actor=request.user, from_status="new")
         publish_order_event(order)
         notify_order_event(order, "order.accepted", exclude={request.user.id}, payload={"prep_minutes": minutes})
         return Response(self.get_serializer(order).data)
@@ -1137,6 +1151,13 @@ class OrderViewSet(viewsets.ModelViewSet):
             if not order.merchant_arrived_at:
                 order.merchant_arrived_at = timezone.now()
                 order.save(update_fields=["merchant_arrived_at", "updated_at"])
+                record_order_activity(
+                    order,
+                    "captain_arrived",
+                    actor=request.user,
+                    from_status=order.status,
+                    to_status=order.status,
+                )
         publish_order_event(order, "order.captain_arrived")
         return Response(self.get_serializer(order).data)
 
@@ -1161,6 +1182,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 raise PermissionDenied("This order does not belong to you.")
             if new_status not in transitions.get(role, {}).get(order.status, set()):
                 return Response({"detail": "This status transition is not allowed."}, status=400)
+            previous_status = order.status
             if new_status == "picked_up" and order.order_type == "store" and not order.merchant_arrived_at:
                 return Response({"detail": "Report arrival at the merchant before confirming pickup."}, status=400)
             # Cash handover is reconciled after successful delivery. It must never
@@ -1173,11 +1195,19 @@ class OrderViewSet(viewsets.ModelViewSet):
             if new_status == "cancelled":
                 restore_order_stock(order)
                 order.save()
+                record_order_activity(
+                    order, "status_changed", actor=request.user,
+                    from_status=previous_status, to_status=order.status,
+                )
             elif new_status == "completed":
                 order.status = "awaiting_confirmation"
                 complete_order(order, completed_by=request.user, method="customer")
             else:
                 order.save()
+                record_order_activity(
+                    order, "status_changed", actor=request.user,
+                    from_status=previous_status, to_status=order.status,
+                )
         publish_order_event(order, "order.ready" if new_status == "ready" else "order.updated")
         if new_status == "cancelled":
             notify_order_event(order, "order.cancelled", exclude={request.user.id},
@@ -1213,13 +1243,88 @@ class OrderViewSet(viewsets.ModelViewSet):
             elig = evaluate_captain(request.user, captain, order=order)
             if not elig["can_accept_order"]:
                 return Response({"detail": elig["message"], "reason": elig["reason"], "eligibility": elig}, status=403)
+            previous_status = order.status
             order.captain = captain
             order.status = "assigned"
             order.captain_accepted_at = timezone.now()
             order.save(update_fields=["captain", "status", "captain_accepted_at", "updated_at"])
+            record_order_activity(
+                order, "assigned", actor=request.user,
+                from_status=previous_status, to_status=order.status,
+            )
         publish_order_event(order)
         notify_order_event(order, "order.assigned", exclude={request.user.id}, payload={"status": "assigned"})
         return Response(self.get_serializer(order).data)
+
+
+class RatingViewSet(viewsets.ModelViewSet):
+    serializer_class = RatingSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Rating.objects.select_related("order", "author").order_by("-created_at", "-id")
+    http_method_names = ["get", "post", "head", "options"]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role == "admin" or user.is_superuser:
+            return self.queryset
+        if user.role == "merchant":
+            return self.queryset.filter(target_type="merchant", order__merchant__user=user)
+        if user.role == "captain":
+            return self.queryset.filter(target_type="captain", order__captain__user=user)
+        return self.queryset.filter(author=user)
+
+    def create(self, request, *args, **kwargs):
+        if request.user.role != "customer":
+            raise PermissionDenied("Only customers can submit order ratings.")
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order_id = serializer.validated_data["order"].pk
+        target_type = serializer.validated_data["target_type"]
+        score = serializer.validated_data["score"]
+        comment = serializer.validated_data.get("comment", "")
+
+        with transaction.atomic():
+            order = Order.objects.select_for_update().filter(pk=order_id).first()
+            if order is None:
+                raise NotFound("Order not found.")
+            if order.customer_id != request.user.id:
+                raise PermissionDenied("You can only rate your own orders.")
+            if order.status != "completed":
+                raise ValidationError({"order": "Only completed orders can be rated."})
+            if target_type == "captain":
+                if order.captain_id is None:
+                    raise ValidationError({"target_type": "This order has no assigned captain."})
+                profile = order.captain
+                ratings = Rating.objects.filter(target_type="captain", order__captain=profile)
+            elif target_type == "merchant":
+                if order.order_type != "store" or order.merchant_id is None:
+                    raise ValidationError({"target_type": "Only store orders can rate a merchant."})
+                profile = order.merchant
+                ratings = Rating.objects.filter(target_type="merchant", order__merchant=profile)
+            else:
+                raise ValidationError({"target_type": "Choose captain or merchant."})
+
+            rating, created = Rating.objects.get_or_create(
+                order=order,
+                author=request.user,
+                target_type=target_type,
+                defaults={"score": score, "comment": comment},
+            )
+            if not created:
+                rating.score = score
+                rating.comment = comment
+                rating.save(update_fields=["score", "comment"])
+            average = ratings.aggregate(value=Avg("score"))["value"]
+            profile.rating = (
+                Decimal(str(average)).quantize(Decimal("0.01"))
+                if average is not None
+                else Decimal("5.00")
+            )
+            profile.save(update_fields=["rating"])
+
+        response = self.get_serializer(rating).data
+        return Response(response, status=201 if created else 200)
+
 
 class SettlementViewSet(viewsets.ModelViewSet):
     serializer_class = SettlementSerializer
