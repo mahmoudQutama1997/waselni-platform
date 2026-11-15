@@ -215,6 +215,9 @@ class InventoryNotificationTests(TestCase):
         self.assertEqual(accepted.status_code, 200, accepted.data)
         self.assertTrue(Notification.objects.filter(
             user=self.customer, event="order.accepted", order=order).exists())
+        preparing = self.client_for(self.merchant_user).post(
+            f"/api/orders/{order.id}/status/", {"status": "preparing"}, format="json")
+        self.assertEqual(preparing.status_code, 200, preparing.data)
         ready = self.client_for(self.merchant_user).post(
             f"/api/orders/{order.id}/status/", {"status": "ready"}, format="json")
         self.assertEqual(ready.status_code, 200, ready.data)
@@ -603,9 +606,12 @@ class StockRealtimeBroadcastTests(TransactionTestCase):
         self.assertEqual(self.stock(), 7)
         self.layer.sent.clear()
         Order.objects.filter(pk=order_id).update(status="delivering", captain=self.captain)
-        response = self.client_for(self.captain_user).post(
+        delivered = self.client_for(self.captain_user).post(
+            f"/api/orders/{order_id}/status/", {"status": "awaiting_confirmation"}, format="json")
+        self.assertEqual(delivered.status_code, 200, delivered.data)
+        completed = self.client_for(self.customer).post(
             f"/api/orders/{order_id}/status/", {"status": "completed"}, format="json")
-        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(completed.status_code, 200, completed.data)
         self.assertEqual(self.stock(), 7)
         self.assertEqual(self.stock_events(), [])
 
@@ -683,7 +689,11 @@ class ConcurrentLastUnitOrderTests(TransactionTestCase):
                 # re-evaluating the conditional UPDATE after the row lock.
                 for attempt in range(6):
                     try:
-                        return client.post("/api/orders/", payload, format="json").status_code
+                        response = client.post(
+                            "/api/orders/", payload, format="json",
+                            HTTP_IDEMPOTENCY_KEY=f"concurrent-{user.id}",
+                        )
+                        return response.status_code, getattr(response, "data", None)
                     except OperationalError:
                         if attempt == 5:
                             raise
@@ -692,8 +702,10 @@ class ConcurrentLastUnitOrderTests(TransactionTestCase):
                 connections.close_all()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            statuses = sorted(pool.map(place, self.customers))
-        self.assertEqual(statuses, [201, 400])
+            results = list(pool.map(place, self.customers))
+        statuses = sorted(status for status, _ in results)
+        self.assertEqual(sum(status in (200, 201) for status in statuses), 1, results)
+        self.assertEqual(statuses.count(400), 1, results)
         self.assertEqual(Order.objects.count(), 1)
         self.product.refresh_from_db()
         self.assertEqual(self.product.quantity, 0)

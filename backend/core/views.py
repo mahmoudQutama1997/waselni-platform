@@ -27,6 +27,7 @@ from .services.eligibility import (
     eligible_captain_user_ids, order_compatibility_reasons, set_approval, APPROVAL_STATUSES,
 )
 from .validators import validate_document_upload, validate_image_upload
+from .services.order_completion import complete_expired_order_confirmations, complete_order
 from .storage import WaselniMediaStorage, is_captain_document
 
 
@@ -577,6 +578,7 @@ class AdminUsersView(APIView):
                 "id": user.id, "username": user.username, "identity_number": user.identity_number or "",
                 "first_name": user.first_name, "last_name": user.last_name, "name": user.get_full_name() or user.username,
                 "phone": user.phone, "role": user.role, "is_active": user.is_active,
+                "is_finance_staff": user.is_finance_staff,
                 "subscription_required": state["required"],
                 "subscription_active": state["active"],
                 "subscription_status": state["status"],
@@ -691,14 +693,46 @@ class AdminUserDetailView(APIView):
             raise PermissionDenied("Only the platform administrator can manage accounts.")
     def patch(self, request, user_id):
         self.check_admin(request)
-        try: user = User.objects.get(pk=user_id)
-        except User.DoesNotExist: return Response({"detail": "User not found."}, status=404)
-        if "is_active" in request.data: user.is_active = as_bool(request.data["is_active"])
-        if "subscription_required" in request.data: user.subscription_required = as_bool(request.data["subscription_required"])
-        if "phone" in request.data: user.phone = str(request.data["phone"]).strip()
-        user.save()
+        try:
+            with transaction.atomic():
+                user = User.objects.select_for_update().get(pk=user_id)
+                if "is_active" in request.data:
+                    user.is_active = as_bool(request.data["is_active"])
+                if "is_finance_staff" in request.data:
+                    granted = as_bool(request.data["is_finance_staff"])
+                    if user.is_finance_staff != granted:
+                        user.is_finance_staff = granted
+                        FinanceAccessAudit.objects.create(user=user, changed_by=request.user, granted=granted)
+                if "subscription_required" in request.data:
+                    user.subscription_required = as_bool(request.data["subscription_required"])
+                if "phone" in request.data:
+                    user.phone = str(request.data["phone"]).strip()
+                user.save()
+        except User.DoesNotExist:
+            return Response({"detail": "User not found."}, status=404)
         publish_captain_eligibility(user)
-        return Response({"ok": True, "is_active": user.is_active, "subscription_required": user.subscription_required})
+        return Response({
+            "ok": True,
+            "is_active": user.is_active,
+            "is_finance_staff": user.is_finance_staff,
+            "subscription_required": user.subscription_required,
+        })
+
+
+class FinanceAccessAuditView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != "admin" and not request.user.is_superuser:
+            raise PermissionDenied("Only the platform administrator can view finance access history.")
+        rows = FinanceAccessAudit.objects.select_related("user", "changed_by")[:200]
+        return Response([{
+            "id": row.id,
+            "user": row.user.get_full_name() or row.user.username,
+            "changed_by": row.changed_by.get_full_name() or row.changed_by.username,
+            "granted": row.granted,
+            "created_at": row.created_at.isoformat(),
+        } for row in rows])
 
 
 class AdminUserSubscriptionView(APIView):
@@ -902,6 +936,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             return self.queryset.filter(captain__user=u)
         return self.queryset.filter(customer=u)
 
+    def list(self, request, *args, **kwargs):
+        complete_expired_order_confirmations()
+        return super().list(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         error = subscription_access_error(request.user)
         if error:
@@ -964,6 +1002,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     def available(self, request):
         if request.user.role != "captain":
             raise PermissionDenied("Captain account required.")
+        complete_expired_order_confirmations()
         try:
             captain = request.user.captain_profile
         except CaptainProfile.DoesNotExist:
@@ -1080,7 +1119,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             if order.status != "new":
                 return Response({"detail": "This order is no longer new."}, status=409)
             order.prep_minutes = minutes
-            order.status = "preparing"
+            order.status = "accepted"
             order.accepted_at = timezone.now()
             order.save()
         publish_order_event(order)
@@ -1108,10 +1147,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         new_status = request.data.get("status")
         # Existing assigned/in-progress orders may be completed even after a subscription expires.
         transitions = {
-            "merchant": {"new": {"cancelled"}, "preparing": {"ready"}},
-            "captain": {"assigned": {"picked_up"}, "picked_up": {"delivering"}, "delivering": {"completed"}},
-            "admin": {"new": {"cancelled"}, "preparing": {"cancelled"}, "ready": {"cancelled"}, "assigned": {"cancelled"}},
-            "customer": {"new": {"cancelled"}},
+            "merchant": {"new": {"cancelled"}, "accepted": {"preparing"}, "preparing": {"ready"}},
+            "captain": {"assigned": {"picked_up"}, "picked_up": {"delivering"}, "delivering": {"awaiting_confirmation"}},
+            "admin": {"new": {"cancelled"}, "accepted": {"cancelled"}, "preparing": {"cancelled"}, "ready": {"cancelled"}, "assigned": {"cancelled"}},
+            "customer": {"new": {"cancelled"}, "awaiting_confirmation": {"completed"}},
         }
         with transaction.atomic():
             order = Order.objects.select_for_update(of=("self",)).select_related("merchant__user", "captain__user", "customer").get(pk=pk)
@@ -1131,15 +1170,16 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.status = new_status
             if new_status == "ready":
                 order.ready_at = timezone.now()
+            elif new_status == "awaiting_confirmation":
+                order.captain_delivered_at = timezone.now()
             if new_status == "cancelled":
                 restore_order_stock(order)
-            order.save()
-            if new_status == "completed" and order.order_type == "store" and order.payment_method == "cash" and order.merchant_id and order.captain_id:
-                CashSettlement.objects.get_or_create(
-                    order=order,
-                    defaults={"merchant": order.merchant, "captain": order.captain,
-                              "amount": order.subtotal, "reference": uuid.uuid4().hex[:12].upper()},
-                )
+                order.save()
+            elif new_status == "completed":
+                order.status = "awaiting_confirmation"
+                complete_order(order, completed_by=request.user, method="customer")
+            else:
+                order.save()
         publish_order_event(order, "order.ready" if new_status == "ready" else "order.updated")
         if new_status == "cancelled":
             notify_order_event(order, "order.cancelled", exclude={request.user.id},
@@ -1189,17 +1229,220 @@ class SettlementViewSet(viewsets.ModelViewSet):
     queryset = CashSettlement.objects.select_related("order", "merchant", "captain").all()
     def get_queryset(self):
         u = self.request.user
-        if u.role == "admin": return self.queryset
+        if u.role == "admin" or u.is_finance_staff or u.is_superuser: return self.queryset
         if u.role == "merchant": return self.queryset.filter(merchant__user=u)
         if u.role == "captain": return self.queryset.filter(captain__user=u)
         return self.queryset.none()
     http_method_names = ["get", "post", "head", "options"]
+
+    def _is_finance_admin(self, user):
+        return user.role == "admin" or user.is_finance_staff or user.is_superuser
+
+    def _receipt_data(self, receipt):
+        return {
+            "id": receipt.id,
+            "reference": receipt.reference,
+            "captain_id": receipt.captain_id,
+            "captain_name": receipt.captain.user.get_full_name() or receipt.captain.user.username,
+            "amount": str(receipt.amount),
+            "recorded_by": receipt.recorded_by.get_full_name() or receipt.recorded_by.username if receipt.recorded_by else None,
+            "created_at": receipt.created_at.isoformat(),
+            "notes": receipt.notes,
+            "allocations": [{
+                "order_id": allocation.settlement.order_id,
+                "amount": str(allocation.amount),
+            } for allocation in receipt.allocations.select_related("settlement").all()],
+        }
+
+    @action(detail=False, methods=["get"])
+    def ledger(self, request):
+        complete_expired_order_confirmations()
+        qs = self.queryset.filter(
+            order__status="completed",
+            order__payment_method="cash",
+            order__order_type="store",
+        )
+        if request.user.role == "merchant":
+            qs = qs.filter(merchant__user=request.user)
+        elif request.user.role == "captain":
+            qs = qs.filter(captain__user=request.user)
+        elif not self._is_finance_admin(request.user):
+            raise PermissionDenied("Cash settlement access is limited to merchants, captains, and finance staff.")
+
+        rows = []
+        for settlement in qs.select_related("order", "merchant", "captain__user").prefetch_related("allocations"):
+            allocated = sum((allocation.amount for allocation in settlement.allocations.all()), Decimal("0.00"))
+            settled = min(settlement.amount, max(allocated, settlement.amount if settlement.closed else Decimal("0.00")))
+            outstanding = max(settlement.amount - settled, Decimal("0.00"))
+            rows.append({
+                "id": settlement.id,
+                "order_id": settlement.order_id,
+                "captain_id": settlement.captain_id,
+                "captain_name": settlement.captain.user.get_full_name() or settlement.captain.user.username,
+                "merchant_name": settlement.merchant.shop_name,
+                "amount": str(settlement.amount),
+                "settled_amount": str(settled),
+                "outstanding_amount": str(outstanding),
+                "status": "settled" if outstanding == 0 else "partial" if settled > 0 else "outstanding",
+                "created_at": settlement.created_at.isoformat(),
+            })
+
+        receipts = CashSettlementReceipt.objects.select_related("captain__user", "recorded_by").prefetch_related(
+            "allocations__settlement"
+        )
+        if request.user.role == "captain":
+            receipts = receipts.filter(captain__user=request.user)
+        elif request.user.role == "merchant":
+            receipts = receipts.filter(allocations__settlement__merchant__user=request.user).distinct()
+        else:
+            receipts = receipts.order_by("-created_at")
+        serialized_receipts = [self._receipt_data(receipt) for receipt in receipts[:200]]
+        due = sum((Decimal(row["amount"]) for row in rows), Decimal("0.00"))
+        settled_total = sum((Decimal(row["settled_amount"]) for row in rows), Decimal("0.00"))
+        response = {
+            "orders": rows,
+            "receipts": serialized_receipts,
+            "total_due": str(due),
+            "total_settled": str(settled_total),
+            "outstanding": str(due - settled_total),
+        }
+        if self._is_finance_admin(request.user):
+            response["captains"] = [{
+                "id": captain.id,
+                "name": captain.user.get_full_name() or captain.user.username,
+            } for captain in CaptainProfile.objects.select_related("user").order_by("user__first_name", "user__last_name")]
+        return Response(response)
+
+    @action(detail=False, methods=["get", "post"])
+    def receipts(self, request):
+        if not self._is_finance_admin(request.user):
+            raise PermissionDenied("Only finance staff can record or view cash receipts.")
+        if request.method == "GET":
+            receipts = CashSettlementReceipt.objects.select_related(
+                "captain__user", "recorded_by"
+            ).prefetch_related("allocations__settlement")[:200]
+            return Response([self._receipt_data(receipt) for receipt in receipts])
+
+        try:
+            captain_id = int(request.data.get("captain_id"))
+            raw_amount = Decimal(str(request.data.get("amount", "")))
+            order_ids = request.data.get("order_ids")
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValidationError("Enter a captain, valid amount, and order IDs.")
+        if not raw_amount.is_finite():
+            raise ValidationError({"amount": "Receipt amount must be a finite decimal value."})
+        try:
+            amount = raw_amount.quantize(Decimal("0.01"))
+        except InvalidOperation:
+            raise ValidationError({"amount": "Enter a valid amount with at most two decimal places."})
+        if amount != raw_amount:
+            raise ValidationError({"amount": "Enter an amount with at most two decimal places."})
+        reference = str(request.data.get("reference", "")).strip()
+        notes = str(request.data.get("notes", "")).strip()
+        if not reference or len(reference) > 100:
+            raise ValidationError({"reference": "Enter a unique transaction reference (up to 100 characters)."})
+        if not amount.is_finite() or amount <= 0 or amount > Decimal("99999999.99"):
+            raise ValidationError({"amount": "Receipt amount must be greater than zero and within the supported range."})
+        if not isinstance(order_ids, list) or not order_ids:
+            raise ValidationError({"order_ids": "Select at least one completed cash order."})
+        try:
+            order_ids = [int(order_id) for order_id in order_ids]
+        except (TypeError, ValueError):
+            raise ValidationError({"order_ids": "Order IDs must be integers."})
+        if len(set(order_ids)) != len(order_ids):
+            raise ValidationError({"order_ids": "Do not repeat order IDs."})
+
+        try:
+            with transaction.atomic():
+                existing = CashSettlementReceipt.objects.filter(reference=reference).first()
+                if existing:
+                    existing_order_ids = set(existing.allocations.values_list("settlement__order_id", flat=True))
+                    if (
+                        existing.captain_id == captain_id
+                        and existing.amount == amount
+                        and existing.recorded_by_id == request.user.id
+                        and existing.notes == notes[:500]
+                        and existing_order_ids == set(order_ids)
+                    ):
+                        return Response(self._receipt_data(existing), status=200)
+                    return Response({"detail": "This transaction reference is already in use."}, status=409)
+
+                captain = CaptainProfile.objects.select_related("user").get(pk=captain_id)
+                settlements = list(
+                    CashSettlement.objects.select_for_update()
+                    .filter(
+                        order_id__in=order_ids,
+                        captain=captain,
+                        order__status="completed",
+                        order__order_type="store",
+                        order__payment_method="cash",
+                    )
+                    .select_related("order", "merchant")
+                    .order_by("order_id")
+                )
+                if {row.order_id for row in settlements} != set(order_ids):
+                    raise ValidationError({"order_ids": "Every selected order must be a completed cash store order assigned to this captain."})
+
+                existing = CashSettlementReceipt.objects.filter(reference=reference).first()
+                if existing:
+                    existing_order_ids = set(existing.allocations.values_list("settlement__order_id", flat=True))
+                    if (
+                        existing.captain_id == captain_id
+                        and existing.amount == amount
+                        and existing.recorded_by_id == request.user.id
+                        and existing.notes == notes[:500]
+                        and existing_order_ids == set(order_ids)
+                    ):
+                        return Response(self._receipt_data(existing), status=200)
+                    return Response({"detail": "This transaction reference is already in use."}, status=409)
+
+                balances = {}
+                available = Decimal("0.00")
+                for settlement in settlements:
+                    allocated = CashSettlementAllocation.objects.filter(settlement=settlement).aggregate(
+                        total=Sum("amount")
+                    )["total"] or Decimal("0.00")
+                    settled = max(allocated, settlement.amount if settlement.closed else Decimal("0.00"))
+                    balance = max(settlement.amount - settled, Decimal("0.00"))
+                    balances[settlement.id] = balance
+                    available += balance
+                if amount > available:
+                    raise ValidationError({"amount": f"Receipt exceeds the selected orders' outstanding balance ({available:.2f})."})
+
+                receipt = CashSettlementReceipt.objects.create(
+                    captain=captain,
+                    recorded_by=request.user,
+                    amount=amount,
+                    reference=reference,
+                    notes=notes[:500],
+                )
+                remaining = amount
+                for settlement in settlements:
+                    allocation_amount = min(remaining, balances[settlement.id])
+                    if allocation_amount > 0:
+                        CashSettlementAllocation.objects.create(
+                            receipt=receipt,
+                            settlement=settlement,
+                            amount=allocation_amount,
+                        )
+                        remaining -= allocation_amount
+                    if remaining == 0:
+                        break
+        except CaptainProfile.DoesNotExist:
+            raise NotFound("Captain profile not found.")
+
+        return Response(self._receipt_data(receipt), status=201)
     def create(self, request, *args, **kwargs):
         order_id = request.data.get("order")
         try:
-            order = Order.objects.get(pk=order_id, payment_method="cash", status="completed")
+            order = Order.objects.get(
+                pk=order_id,
+                payment_method="cash",
+                status="completed",
+                order_type="store",
+            )
         except (Order.DoesNotExist, ValueError, TypeError):
-            return Response({"detail": "Only completed cash orders can be reconciled."}, status=404)
+            return Response({"detail": "Only completed cash store orders can be reconciled."}, status=404)
         if not order.merchant or not order.captain: return Response({"detail": "Order needs a merchant and captain."}, status=400)
         if request.user.role == "merchant" and order.merchant.user_id != request.user.id:
             raise PermissionDenied()
@@ -1210,24 +1453,10 @@ class SettlementViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(obj).data, status=201)
     @action(detail=True, methods=["post"])
     def confirm(self, request, pk=None):
-        with transaction.atomic():
-            try:
-                obj = CashSettlement.objects.select_for_update().select_related("merchant__user", "captain__user").get(pk=pk)
-            except CashSettlement.DoesNotExist:
-                raise NotFound("Cash settlement not found.")
-            role = request.user.role
-            if obj.order.status != "completed":
-                return Response({"detail": "Cash settlement becomes available only after the order is completed."}, status=409)
-            if role == "merchant" and obj.merchant.user_id == request.user.id:
-                if not obj.closed: obj.confirmed_by_merchant = True
-            elif role == "captain" and obj.captain.user_id == request.user.id:
-                if not obj.closed: obj.confirmed_by_captain = True
-            else:
-                raise PermissionDenied("Only the assigned merchant and captain can confirm their own cash handover.")
-            obj.closed = obj.confirmed_by_merchant and obj.confirmed_by_captain
-            if obj.closed and not obj.closed_at: obj.closed_at = timezone.now()
-            obj.save(update_fields=["confirmed_by_merchant", "confirmed_by_captain", "closed", "closed_at"])
-        return Response(self.get_serializer(obj).data)
+        return Response(
+            {"detail": "Record cash collected from captains through POST /api/settlements/receipts/."},
+            status=410,
+        )
 
 class DelayReportViewSet(viewsets.ModelViewSet):
     serializer_class = DelayReportSerializer
@@ -1261,8 +1490,26 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     queryset = SupportTicket.objects.all()
     def get_queryset(self):
-        return self.queryset if self.request.user.role == "admin" else self.queryset.filter(user=self.request.user)
-    def perform_create(self, serializer): serializer.save(user=self.request.user)
+        user = self.request.user
+        return self.queryset if user.role == "admin" or user.is_superuser else self.queryset.filter(user=user)
+
+    def perform_create(self, serializer):
+        order = serializer.validated_data.get("order")
+        if not order:
+            serializer.save(user=self.request.user)
+            return
+        user = self.request.user
+        authorized = (
+            user.role == "admin" or user.is_superuser
+            or order.customer_id == user.id
+            or (order.captain_id and order.captain.user_id == user.id)
+            or (order.merchant_id and order.merchant.user_id == user.id)
+        )
+        if not authorized:
+            raise PermissionDenied("You can only report an order you are involved in.")
+        with transaction.atomic():
+            order = Order.objects.select_for_update(of=("self",)).get(pk=order.pk)
+            serializer.save(user=user, order=order)
 
 class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1298,6 +1545,7 @@ class MerchantReportsView(APIView):
     def get(self, request):
         if request.user.role != "merchant":
             raise PermissionDenied("Merchant account required.")
+        complete_expired_order_confirmations()
         try:
             merchant = request.user.merchant_profile
         except MerchantProfile.DoesNotExist:
@@ -1307,20 +1555,30 @@ class MerchantReportsView(APIView):
         today_orders = orders.filter(created_at__date=today)
         completed_today = today_orders.filter(status="completed")
         gross = completed_today.aggregate(value=Sum("total"))["value"] or Decimal("0.00")
-        settlements = CashSettlement.objects.filter(merchant=merchant, created_at__date=today).select_related("captain__user", "order").order_by("-created_at")
-        settlement_rows = [{
-            "id": row.id, "reference": row.reference, "order_id": row.order_id,
-            "captain_name": row.captain.user.get_full_name() or row.captain.user.username,
-            "amount": str(row.amount), "confirmed_by_merchant": row.confirmed_by_merchant,
-            "confirmed_by_captain": row.confirmed_by_captain, "closed": row.closed,
-            "created_at": row.created_at.isoformat(), "closed_at": row.closed_at.isoformat() if row.closed_at else None,
-        } for row in settlements]
+        settlements = CashSettlement.objects.filter(
+            merchant=merchant, order__status="completed", order__payment_method="cash",
+            order__order_type="store",
+        ).select_related("captain__user", "order").prefetch_related("allocations").order_by("-created_at")
+        settlement_rows = []
+        for row in settlements:
+            allocated = sum((allocation.amount for allocation in row.allocations.all()), Decimal("0.00"))
+            settled = min(row.amount, max(allocated, row.amount if row.closed else Decimal("0.00")))
+            settlement_rows.append({
+                "id": row.id, "reference": row.reference, "order_id": row.order_id,
+                "captain_name": row.captain.user.get_full_name() or row.captain.user.username,
+                "amount": str(row.amount), "settled_amount": str(settled),
+                "outstanding_amount": str(row.amount - settled),
+                "confirmed_by_merchant": row.confirmed_by_merchant,
+                "confirmed_by_captain": row.confirmed_by_captain, "closed": row.closed,
+                "created_at": row.created_at.isoformat(), "closed_at": row.closed_at.isoformat() if row.closed_at else None,
+            })
         return Response({
             "date": today.isoformat(), "orders_today": today_orders.count(),
             "completed_today": completed_today.count(), "gross_sales_today": str(gross),
             # Commission/subscription deductions cannot be inferred until the platform defines a rate/rule.
             "net_sales_today": None, "net_sales_note": "Commission rules are not configured; net earnings are not calculated.",
-            "cash_settlements_today": settlement_rows,
+            "cash_settlements": settlement_rows,
+            "cash_products_due": str(sum((Decimal(row["outstanding_amount"]) for row in settlement_rows), Decimal("0.00"))),
             "all_orders": OrderSerializer(orders.order_by("-created_at")[:100], many=True, context={"request": request}).data,
         })
 
@@ -1374,11 +1632,12 @@ class DashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
         if request.user.role != "admin" and not request.user.is_superuser: return Response({"detail": "Admin only."}, status=403)
+        complete_expired_order_confirmations()
         today = timezone.localdate()
         orders = Order.objects.filter(created_at__date=today)
         return Response({
             "orders_today": orders.count(),
-            "active_orders": Order.objects.filter(status__in=["new", "accepted", "preparing", "ready", "assigned", "picked_up", "delivering"]).count(),
+            "active_orders": Order.objects.filter(status__in=["new", "accepted", "preparing", "ready", "assigned", "picked_up", "delivering", "awaiting_confirmation"]).count(),
             "completed_today": orders.filter(status="completed").count(),
             "online_captains": len(eligible_captain_user_ids()),  # online AND eligible, per the central service
             "open_merchants": MerchantProfile.objects.filter(is_open=True).count(),
@@ -1412,7 +1671,7 @@ class AdminOperationsView(APIView):
             "captain_longitude": float(o.captain.current_longitude) if o.captain_id and o.captain.current_longitude is not None else None,
             "captain_location_updated_at": o.captain.current_location_updated_at.isoformat() if o.captain_id and o.captain.current_location_updated_at else None,
         } for o in Order.objects.select_related("customer", "merchant", "captain__user").order_by("-created_at")[:50]]
-        tickets = [{"id": x.id, "subject": x.subject, "message": x.message, "status": x.status, "username": x.user.username, "created_at": x.created_at.isoformat()} for x in SupportTicket.objects.select_related("user").order_by("-created_at")[:50]]
+        tickets = [{"id": x.id, "order_id": x.order_id, "subject": x.subject, "message": x.message, "status": x.status, "username": x.user.username, "created_at": x.created_at.isoformat()} for x in SupportTicket.objects.select_related("user").order_by("-created_at")[:50]]
         return Response({"captains": captains, "merchants": merchants, "orders": orders, "tickets": tickets})
     def patch(self, request):
         if request.user.role != "admin" and not request.user.is_superuser: return Response({"detail": "Admin only."}, status=403)

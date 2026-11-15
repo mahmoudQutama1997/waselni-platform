@@ -60,7 +60,8 @@ def _delete_replaced_upload(instance, field_name, previous_name):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name", "last_name", "phone", "identity_number", "role", "language", "profile_image", "is_active", "subscription_required", "must_change_password"]
+        fields = ["id", "username", "email", "first_name", "last_name", "phone", "identity_number", "role", "language", "profile_image", "is_active", "is_finance_staff", "subscription_required", "must_change_password"]
+        read_only_fields = ["is_finance_staff"]
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
@@ -205,7 +206,12 @@ class OrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = "__all__"
-        read_only_fields = ["customer", "captain", "status", "accepted_at", "captain_accepted_at", "ready_at", "created_at", "updated_at", "total", "subtotal", "request_key"]
+        read_only_fields = [
+            "customer", "captain", "status", "accepted_at", "captain_accepted_at",
+            "ready_at", "captain_delivered_at", "completed_at", "completed_by",
+            "completed_by_name", "completion_method", "created_at", "updated_at", "total", "subtotal",
+            "request_key",
+        ]
 
     def to_internal_value(self, data):
         return super().to_internal_value(normalize_coordinates(data))

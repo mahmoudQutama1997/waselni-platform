@@ -108,6 +108,7 @@ export const MOBILE_NAV = {
     { to: '/', labelKey: 'home', icon: 'home', end: true },
     { to: '/orders', labelKey: 'orders', icon: 'orders' },
     { to: '/ride', labelKey: 'rideService', icon: 'ride' },
+    { to: '/support', labelKey: 'support', icon: 'support' },
     { to: '/account', labelKey: 'accountProfile', icon: 'user' },
   ],
   merchant: [
@@ -115,12 +116,14 @@ export const MOBILE_NAV = {
     { to: '/catalog', labelKey: 'catalog', icon: 'catalog' },
     { to: '/orders', labelKey: 'orders', icon: 'orders' },
     { to: '/reports', labelKey: 'reports', icon: 'reports' },
+    { to: '/support', labelKey: 'support', icon: 'support' },
     { to: '/account', labelKey: 'accountProfile', icon: 'user' },
   ],
   captain: [
     { to: '/captain', labelKey: 'captain', icon: 'captain' },
     { to: '/orders', labelKey: 'orders', icon: 'orders' },
     { to: '/settlements', labelKey: 'settlements', icon: 'money' },
+    { to: '/support', labelKey: 'support', icon: 'support' },
     { to: '/account', labelKey: 'accountProfile', icon: 'user' },
   ],
   admin: [

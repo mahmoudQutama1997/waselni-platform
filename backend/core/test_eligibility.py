@@ -478,9 +478,13 @@ class DispatchTests(TestCase):
         ride = make_order(order_type="ride", status="new", required_vehicle="motorcycle")
         self.client.force_authenticate(self.user)
         self.client.post(f"/api/orders/{ride.id}/assign/", {"accepted_delivery_fee": str(ride.delivery_fee)}, format="json")
-        for status in ("picked_up", "delivering", "completed"):
+        for status in ("picked_up", "delivering", "awaiting_confirmation"):
             r = self.client.post(f"/api/orders/{ride.id}/status/", {"status": status}, format="json")
             self.assertEqual(r.status_code, 200, status)
+        self.client.force_authenticate(ride.customer)
+        completed = self.client.post(
+            f"/api/orders/{ride.id}/status/", {"status": "completed"}, format="json")
+        self.assertEqual(completed.status_code, 200, completed.data)
         ride.refresh_from_db()
         self.assertEqual(ride.status, "completed")
 

@@ -61,6 +61,10 @@ type Copy = {
   rideServiceHint: string;
   viewCart: string;
   orderStatus: string;
+  confirmReceipt: string;
+  paymentStatus: string;
+  cashStatus: string;
+  onlineNotIntegrated: string;
   noOrders: string;
   closedHint: string;
   results: string;
@@ -126,6 +130,10 @@ const copy: Record<Props['lang'], Copy> = {
     rideServiceHint: 'تنقل سريع داخل المدينة',
     viewCart: 'عرض السلة',
     orderStatus: 'حالة الطلب',
+    confirmReceipt: 'تأكيد استلام الطلب',
+    paymentStatus: 'حالة الدفع',
+    cashStatus: 'الدفع نقداً للكابتن عند التسليم',
+    onlineNotIntegrated: 'الدفع الإلكتروني غير مفعّل؛ لم يتم تأكيد الدفع',
     noOrders: 'لا توجد طلبات سابقة بعد.',
     closedHint: 'هذا المتجر مغلق حالياً، يمكنك التصفح لكن الطلب قد يتأخر.',
     results: 'نتيجة',
@@ -190,6 +198,10 @@ const copy: Record<Props['lang'], Copy> = {
     rideServiceHint: 'Quick rides around the city',
     viewCart: 'View cart',
     orderStatus: 'Order status',
+    confirmReceipt: 'Confirm order receipt',
+    paymentStatus: 'Payment status',
+    cashStatus: 'Cash payable to the captain on delivery',
+    onlineNotIntegrated: 'Online payment is not enabled; payment has not been verified',
     noOrders: 'No previous orders yet.',
     closedHint: 'This store is currently closed. You can browse, but the order may be delayed.',
     results: 'results',
@@ -254,6 +266,10 @@ const copy: Record<Props['lang'], Copy> = {
     rideServiceHint: 'נסיעות מהירות בעיר',
     viewCart: 'לצפייה בסל',
     orderStatus: 'מצב הזמנה',
+    confirmReceipt: 'אישור קבלת ההזמנה',
+    paymentStatus: 'מצב התשלום',
+    cashStatus: 'תשלום במזומן לשליח בעת המסירה',
+    onlineNotIntegrated: 'תשלום מקוון אינו פעיל; התשלום לא אומת',
     noOrders: 'אין עדיין הזמנות קודמות.',
     closedHint: 'החנות סגורה כעת. אפשר לעיין, אך ייתכן עיכוב בהזמנה.',
     results: 'תוצאות',
@@ -276,9 +292,9 @@ const copy: Record<Props['lang'], Copy> = {
 };
 
 const ORDER_STATUS: Record<Props['lang'], Record<string, string>> = {
-  ar: { new: 'جديد', accepted: 'مقبول', preparing: 'قيد التجهيز', ready: 'جاهز', assigned: 'تم تعيين كابتن', picked_up: 'تم الاستلام', delivering: 'قيد التوصيل', completed: 'مكتمل', cancelled: 'ملغي' },
-  en: { new: 'New', accepted: 'Accepted', preparing: 'Preparing', ready: 'Ready', assigned: 'Captain assigned', picked_up: 'Picked up', delivering: 'Delivering', completed: 'Completed', cancelled: 'Cancelled' },
-  he: { new: 'חדש', accepted: 'אושר', preparing: 'בהכנה', ready: 'מוכן', assigned: 'שליח שובץ', picked_up: 'נאסף', delivering: 'במשלוח', completed: 'הושלם', cancelled: 'בוטל' }
+  ar: { new: 'جديد', accepted: 'مقبول', preparing: 'قيد التجهيز', ready: 'جاهز', assigned: 'تم تعيين كابتن', picked_up: 'تم الاستلام', delivering: 'قيد التوصيل', awaiting_confirmation: 'بانتظار تأكيد الزبون', completed: 'مكتمل', cancelled: 'ملغي' },
+  en: { new: 'New', accepted: 'Accepted', preparing: 'Preparing', ready: 'Ready', assigned: 'Captain assigned', picked_up: 'Picked up', delivering: 'Delivering', awaiting_confirmation: 'Awaiting customer confirmation', completed: 'Completed', cancelled: 'Cancelled' },
+  he: { new: 'חדש', accepted: 'אושר', preparing: 'בהכנה', ready: 'מוכן', assigned: 'שליח שובץ', picked_up: 'נאסף', delivering: 'במשלוח', awaiting_confirmation: 'ממתין לאישור הלקוח', completed: 'הושלם', cancelled: 'בוטל' }
 };
 
 const money = (value: string | number) =>
@@ -442,6 +458,7 @@ export default function CustomerStorefront({ lang }: Props) {
   const [loadingStores, setLoadingStores] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmingOrderId, setConfirmingOrderId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -459,16 +476,35 @@ export default function CustomerStorefront({ lang }: Props) {
         if (alive) setLoadingStores(false);
       });
 
-    api('/orders/')
+    const loadOrders = () => api('/orders/')
       .then(data => {
         if (alive) setOrders(rows<Order>(data).slice(0, 3));
       })
       .catch(() => undefined);
+    loadOrders();
+    const orderTimer = setInterval(loadOrders, 5000);
 
     return () => {
       alive = false;
+      clearInterval(orderTimer);
     };
   }, [t.orderError]);
+
+  async function confirmOrderReceipt(orderId: number) {
+    if (confirmingOrderId) return;
+    setConfirmingOrderId(orderId);
+    try {
+      await api(`/orders/${orderId}/status/`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'completed' })
+      });
+      setOrders(rows<Order>(await api('/orders/')).slice(0, 3));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t.orderError);
+    } finally {
+      setConfirmingOrderId(null);
+    }
+  }
 
   useEffect(() => {
     localStorage.setItem('waselni_customer_cart', JSON.stringify(cart));
@@ -1049,6 +1085,16 @@ export default function CustomerStorefront({ lang }: Props) {
                       {ORDER_STATUS[lang][order.status] || order.status}
                     </span>
                     <strong>{money(order.total)}</strong>
+                    <small>{t.paymentStatus}: {order.payment_method === 'cash' ? t.cashStatus : t.onlineNotIntegrated}</small>
+                    {order.status === 'awaiting_confirmation' && (
+                      <button
+                        type="button"
+                        disabled={confirmingOrderId === order.id}
+                        onClick={() => confirmOrderReceipt(order.id)}
+                      >
+                        {confirmingOrderId === order.id ? t.loading : t.confirmReceipt}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

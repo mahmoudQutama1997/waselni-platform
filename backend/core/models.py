@@ -9,6 +9,7 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="customer")
     phone = models.CharField(max_length=30, blank=True)
     identity_number = models.CharField(max_length=40, unique=True, null=True, blank=True)
+    is_finance_staff = models.BooleanField(default=False)
     subscription_required = models.BooleanField(default=False)
     must_change_password = models.BooleanField(default=False)
     language = models.CharField(max_length=2, choices=LANGUAGE_CHOICES, default="ar")
@@ -85,7 +86,7 @@ class Product(models.Model):
 
 class Order(models.Model):
     TYPES = [("ride","Ride"),("parcel","Parcel"),("store","Store")]
-    STATUSES = [(x,x.title()) for x in ["new","accepted","preparing","ready","assigned","picked_up","delivering","completed","cancelled"]]
+    STATUSES = [(x,x.title()) for x in ["new","accepted","preparing","ready","assigned","picked_up","delivering","awaiting_confirmation","completed","cancelled"]]
     PAYMENT = [("cash","Cash"),("online","Online")]
     customer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="customer_orders")
     merchant = models.ForeignKey(MerchantProfile, on_delete=models.PROTECT, null=True, blank=True, related_name="orders")
@@ -93,7 +94,7 @@ class Order(models.Model):
     order_type = models.CharField(max_length=20, choices=TYPES, default="store")
     REQUIRED_VEHICLES = [("any", "Any vehicle"), ("car", "Car"), ("motorcycle", "Motorcycle"), ("truck", "Truck")]
     required_vehicle = models.CharField(max_length=20, choices=REQUIRED_VEHICLES, default="any")
-    status = models.CharField(max_length=20, choices=STATUSES, default="new")
+    status = models.CharField(max_length=24, choices=STATUSES, default="new")
     items = models.JSONField(default=list, blank=True)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -114,6 +115,12 @@ class Order(models.Model):
     captain_accepted_at = models.DateTimeField(null=True, blank=True)
     merchant_arrived_at = models.DateTimeField(null=True, blank=True)
     ready_at = models.DateTimeField(null=True, blank=True)
+    captain_delivered_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="completed_orders")
+    completed_by_name = models.CharField(max_length=150, blank=True)
+    COMPLETION_METHODS = [("captain", "Captain"), ("customer", "Customer"), ("automatic", "Automatic")]
+    completion_method = models.CharField(max_length=12, choices=COMPLETION_METHODS, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     request_key = models.CharField(max_length=64, null=True, blank=True)
@@ -136,6 +143,44 @@ class CashSettlement(models.Model):
     reference = models.CharField(max_length=32, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     closed_at = models.DateTimeField(null=True, blank=True)
+
+
+class CashSettlementReceipt(models.Model):
+    captain = models.ForeignKey(CaptainProfile, on_delete=models.PROTECT, related_name="settlement_receipts")
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="cash_settlement_receipts")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    reference = models.CharField(max_length=100, unique=True)
+    notes = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="cash_receipt_amount_positive"),
+        ]
+
+
+class CashSettlementAllocation(models.Model):
+    receipt = models.ForeignKey(CashSettlementReceipt, on_delete=models.PROTECT, related_name="allocations")
+    settlement = models.ForeignKey(CashSettlement, on_delete=models.PROTECT, related_name="allocations")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["receipt", "settlement"], name="uniq_receipt_settlement_allocation"),
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="cash_allocation_amount_positive"),
+        ]
+
+
+class FinanceAccessAudit(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="finance_access_changes")
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="finance_access_audits")
+    granted = models.BooleanField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
 
 class DelayReport(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="delay_reports")
