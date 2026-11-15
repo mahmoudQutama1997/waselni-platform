@@ -95,6 +95,36 @@ class OrderCompletionAndCashLedgerTests(TestCase):
         self.assertEqual(duplicate.status_code, 400)
         self.assertEqual(CashSettlement.objects.filter(order=order).count(), 1)
 
+    def test_captain_jwt_login_lists_and_updates_own_order(self):
+        order = self.make_order()
+        login = self.client.post(
+            "/api/auth/token/",
+            {"username": self.captain_user.username, "password": "password-123"},
+            format="json",
+        )
+        self.assertEqual(login.status_code, 200, login.data)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+
+        profile = self.client.get("/api/me/")
+        self.assertEqual(profile.status_code, 200, profile.data)
+        self.assertEqual(profile.data["role"], "captain")
+
+        order_list = self.client.get("/api/orders/")
+        self.assertEqual(order_list.status_code, 200, order_list.data)
+        self.assertIn(order.id, [row["id"] for row in order_list.data])
+        available = self.client.get("/api/orders/available/")
+        self.assertEqual(available.status_code, 200, available.data)
+        self.assertIn(order.id, [row["id"] for row in available.data])
+
+        delivered = self.client.post(
+            f"/api/orders/{order.id}/status/",
+            {"status": "awaiting_confirmation"},
+            format="json",
+        )
+        self.assertEqual(delivered.status_code, 200, delivered.data)
+        order.refresh_from_db()
+        self.assertEqual(order.status, "awaiting_confirmation")
+
     def test_captain_cannot_skip_customer_confirmation(self):
         order = self.make_order()
         self.client.force_authenticate(self.captain_user)
