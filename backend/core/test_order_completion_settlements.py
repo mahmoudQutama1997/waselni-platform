@@ -184,6 +184,26 @@ class OrderCompletionAndCashLedgerTests(TestCase):
         order.refresh_from_db()
         self.assertEqual(order.status, "awaiting_confirmation")
 
+    def test_read_requests_do_not_automatically_complete_expired_orders(self):
+        order = self.make_order(status="awaiting_confirmation")
+        order.captain_delivered_at = timezone.now() - timedelta(hours=13)
+        order.save(update_fields=["captain_delivered_at"])
+        requests = (
+            (self.customer, "/api/orders/"),
+            (self.captain_user, "/api/orders/available/"),
+            (self.captain_user, "/api/settlements/ledger/"),
+            (self.merchant_user, "/api/merchant/reports/"),
+            (self.admin, "/api/dashboard/summary/"),
+        )
+
+        for user, path in requests:
+            with self.subTest(path=path):
+                self.client.force_authenticate(user)
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200, response.data)
+                order.refresh_from_db()
+                self.assertEqual(order.status, "awaiting_confirmation")
+
     def test_online_and_ride_completions_create_no_merchant_receivable(self):
         for order_type, payment_method in (("store", "online"), ("ride", "cash")):
             order = self.make_order(

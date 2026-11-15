@@ -27,7 +27,7 @@ from .services.eligibility import (
     eligible_captain_user_ids, order_compatibility_reasons, set_approval, APPROVAL_STATUSES,
 )
 from .validators import validate_document_upload, validate_image_upload
-from .services.order_completion import complete_expired_order_confirmations, complete_order
+from .services.order_completion import complete_order
 from .storage import WaselniMediaStorage, is_captain_document
 
 
@@ -937,7 +937,6 @@ class OrderViewSet(viewsets.ModelViewSet):
         return self.queryset.filter(customer=u)
 
     def list(self, request, *args, **kwargs):
-        complete_expired_order_confirmations()
         return super().list(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
@@ -1002,7 +1001,6 @@ class OrderViewSet(viewsets.ModelViewSet):
     def available(self, request):
         if request.user.role != "captain":
             raise PermissionDenied("Captain account required.")
-        complete_expired_order_confirmations()
         try:
             captain = request.user.captain_profile
         except CaptainProfile.DoesNotExist:
@@ -1256,7 +1254,6 @@ class SettlementViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def ledger(self, request):
-        complete_expired_order_confirmations()
         qs = self.queryset.filter(
             order__status="completed",
             order__payment_method="cash",
@@ -1545,7 +1542,6 @@ class MerchantReportsView(APIView):
     def get(self, request):
         if request.user.role != "merchant":
             raise PermissionDenied("Merchant account required.")
-        complete_expired_order_confirmations()
         try:
             merchant = request.user.merchant_profile
         except MerchantProfile.DoesNotExist:
@@ -1632,7 +1628,6 @@ class DashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
         if request.user.role != "admin" and not request.user.is_superuser: return Response({"detail": "Admin only."}, status=403)
-        complete_expired_order_confirmations()
         today = timezone.localdate()
         orders = Order.objects.filter(created_at__date=today)
         return Response({
