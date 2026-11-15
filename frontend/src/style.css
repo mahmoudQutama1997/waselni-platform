@@ -323,12 +323,14 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 
 /* ---------- Mobile-native shell (installed PWA and mobile web) ---------- */
 :root{--safe-bottom:env(safe-area-inset-bottom,0px);--safe-top:env(safe-area-inset-top,0px)}
-html{overflow-x:hidden;-webkit-text-size-adjust:100%}
-body{min-height:100dvh;overflow-x:hidden;overscroll-behavior-y:contain}
+html{overflow-x:hidden;-webkit-text-size-adjust:100%;overscroll-behavior-y:contain}
+body{min-height:100dvh;overflow-x:hidden}
 img,svg,video,canvas{max-width:100%}
 .mobile-tabbar{display:none}
 
 @media(max-width:800px){
+ /* Keep focused fields and anchor jumps clear of the sticky header and tabbar. */
+ html{scroll-padding:calc(64px + var(--safe-top)) 0 calc(92px + var(--safe-bottom))}
  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);min-height:100dvh}
  .sidebar{position:sticky;top:0;z-index:60;flex-direction:row;align-items:center;gap:10px;padding:calc(8px + var(--safe-top)) 12px 8px;box-shadow:0 6px 22px #2b144a12}
  .side-brand{display:flex;gap:8px;font-size:16px;flex-shrink:0}

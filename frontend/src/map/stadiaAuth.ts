@@ -17,6 +17,9 @@ async function secureStorage() {
 }
 
 async function readStored(): Promise<StoredKey | null> {
+  // The secure-storage plugin has no web implementation; touching it in a
+  // browser throws "SecureStoragePlugin.then() is not implemented on web".
+  if (!isNativePlatform()) return null;
   try {
     const plugin = await secureStorage();
     const { value } = await plugin.get({ key: STORAGE_KEY });
@@ -29,6 +32,7 @@ async function readStored(): Promise<StoredKey | null> {
 }
 
 async function writeStored(value: StoredKey): Promise<void> {
+  if (!isNativePlatform()) return;
   try {
     const plugin = await secureStorage();
     await plugin.set({ key: STORAGE_KEY, value: JSON.stringify(value) });
@@ -36,6 +40,7 @@ async function writeStored(value: StoredKey): Promise<void> {
 }
 
 async function removeStored(): Promise<void> {
+  if (!isNativePlatform()) return;
   try {
     const plugin = await secureStorage();
     await plugin.remove({ key: STORAGE_KEY });

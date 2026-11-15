@@ -4,8 +4,9 @@ import { mapMarker } from '../map/markers';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api';
+import { api, roundCoordinate } from '../api';
 import SafeImage from '../components/SafeImage';
+import ServiceIcon from '../components/ServiceIcon';
 import type { CartLine, Merchant, Order, Product } from './types';
 import { GEOCODING_REVERSE_URL, GEOCODING_SEARCH_URL, geocodeUrl } from '../config';
 
@@ -53,6 +54,11 @@ type Copy = {
   selectLocation: string;
   useLocation: string;
   browseCategories: string;
+  services: string;
+  storeService: string;
+  storeServiceHint: string;
+  rideService: string;
+  rideServiceHint: string;
   viewCart: string;
   orderStatus: string;
   noOrders: string;
@@ -64,6 +70,13 @@ type Copy = {
   addressNotFound: string;
   locationDenied: string;
   locationUnsupported: string;
+  outOfStock: string;
+  lowStock: string;
+  stockLeft: string;
+  itemSoldOut: string;
+  cartStockAlert: string;
+  cartStockClamped: string;
+  maxReached: string;
 };
 
 const copy: Record<Props['lang'], Copy> = {
@@ -104,6 +117,11 @@ const copy: Record<Props['lang'], Copy> = {
     clearCart: 'إفراغ السلة',
     deliveryFeeNote: 'حدد أجرة التوصيل التي تعرض على الكابتن؛ لا تُثبت إلا بعد موافقته.', deliveryFee: 'أجرة التوصيل المقترحة (₪)', storeLocation: 'موقع المتجر', customerLocation: 'حدد موقع استلام الطلب على الخريطة', selectLocation: 'اضغط على الخريطة لتحديد موقعك أو ابحث عن عنوانك.', useLocation: 'استخدم موقعي الحالي',
     browseCategories: 'تصفح التصنيفات',
+    services: 'خدمات وصلني',
+    storeService: 'توصيل المتاجر',
+    storeServiceHint: 'اطلب من متاجرك المفضلة',
+    rideService: 'ركوب الفسبا',
+    rideServiceHint: 'تنقل سريع داخل المدينة',
     viewCart: 'عرض السلة',
     orderStatus: 'حالة الطلب',
     noOrders: 'لا توجد طلبات سابقة بعد.',
@@ -114,7 +132,14 @@ const copy: Record<Props['lang'], Copy> = {
     searching: 'جارٍ البحث...',
     addressNotFound: 'لم يتم العثور على العنوان',
     locationDenied: 'اسمح بالوصول إلى الموقع من المتصفح',
-    locationUnsupported: 'المتصفح لا يدعم تحديد الموقع'
+    locationUnsupported: 'المتصفح لا يدعم تحديد الموقع',
+    outOfStock: 'نفدت الكمية',
+    lowStock: 'كمية محدودة',
+    stockLeft: 'المتوفر',
+    itemSoldOut: 'نفدت الكمية من هذا المنتج.',
+    cartStockAlert: 'نفدت الكمية من بعض منتجات سلتك وتم حذفها:',
+    cartStockClamped: 'تم تعديل الكميات حسب المتوفر في المتجر:',
+    maxReached: 'وصلت للحد الأقصى المتوفر من هذا المنتج.'
   },
 
   en: {
@@ -154,6 +179,11 @@ const copy: Record<Props['lang'], Copy> = {
     clearCart: 'Clear cart',
     deliveryFeeNote: 'Set your proposed delivery fee. It becomes final only after a captain accepts it.', deliveryFee: 'Proposed delivery fee (₪)', storeLocation: 'Store location', customerLocation: 'Choose your delivery location on the map', selectLocation: 'Click the map to set your location or search for an address.', useLocation: 'Use my current location',
     browseCategories: 'Browse categories',
+    services: 'Waselni services',
+    storeService: 'Store delivery',
+    storeServiceHint: 'Order from your favourite stores',
+    rideService: 'Scooter ride',
+    rideServiceHint: 'Quick rides around the city',
     viewCart: 'View cart',
     orderStatus: 'Order status',
     noOrders: 'No previous orders yet.',
@@ -164,7 +194,14 @@ const copy: Record<Props['lang'], Copy> = {
     searching: 'Searching...',
     addressNotFound: 'Address not found',
     locationDenied: 'Allow location access from your browser',
-    locationUnsupported: 'Geolocation is not supported by this browser'
+    locationUnsupported: 'Geolocation is not supported by this browser',
+    outOfStock: 'Out of stock',
+    lowStock: 'Low stock',
+    stockLeft: 'Available',
+    itemSoldOut: 'This item is out of stock.',
+    cartStockAlert: 'Some items sold out and were removed from your cart:',
+    cartStockClamped: 'Quantities were adjusted to the available stock:',
+    maxReached: 'You reached the maximum available quantity for this item.'
   },
 
   he: {
@@ -204,6 +241,11 @@ const copy: Record<Props['lang'], Copy> = {
     clearCart: 'ריקון הסל',
     deliveryFeeNote: 'קבעו דמי משלוח מוצעים. המחיר יאושר סופית רק לאחר שקברניט יקבל אותו.', deliveryFee: 'דמי משלוח מוצעים (₪)', storeLocation: 'מיקום החנות', customerLocation: 'בחרו את מיקום המסירה במפה', selectLocation: 'לחצו על המפה כדי לבחור מיקום או חפשו כתובת.', useLocation: 'השתמשו במיקום שלי',
     browseCategories: 'עיון בקטגוריות',
+    services: 'שירותי وصلني',
+    storeService: 'משלוח מחנויות',
+    storeServiceHint: 'הזמינו מהחנויות האהובות עליכם',
+    rideService: 'נסיעת קטנוע',
+    rideServiceHint: 'נסיעות מהירות בעיר',
     viewCart: 'לצפייה בסל',
     orderStatus: 'מצב הזמנה',
     noOrders: 'אין עדיין הזמנות קודמות.',
@@ -214,7 +256,14 @@ const copy: Record<Props['lang'], Copy> = {
     searching: 'מחפש...',
     addressNotFound: 'הכתובת לא נמצאה',
     locationDenied: 'יש לאשר גישה למיקום בדפדפן',
-    locationUnsupported: 'הדפדפן אינו תומך באיתור מיקום'
+    locationUnsupported: 'הדפדפן אינו תומך באיתור מיקום',
+    outOfStock: 'אזל מהמלאי',
+    lowStock: 'מלאי מוגבל',
+    stockLeft: 'זמין',
+    itemSoldOut: 'הפריט אזל מהמלאי.',
+    cartStockAlert: 'חלק מהפריטים אזלו והוסרו מהסל:',
+    cartStockClamped: 'הכמויות עודכנו לפי המלאי הזמין:',
+    maxReached: 'הגעתם לכמות המרבית הזמינה של פריט זה.'
   }
 };
 
@@ -235,6 +284,25 @@ const statusTone = (status: string) =>
       : status === 'new'
         ? 'is-new'
         : 'is-live';
+
+type StockState = 'untracked' | 'out' | 'low' | 'in';
+
+const stockState = (product: Product): StockState =>
+  product.stock_status ||
+  (typeof product.quantity === 'number'
+    ? product.quantity <= 0
+      ? 'out'
+      : product.quantity <= (product.low_stock_threshold ?? 5)
+        ? 'low'
+        : 'in'
+    : 'untracked');
+
+const stockLimit = (product: Product): number | null =>
+  typeof product.quantity === 'number' ? Math.max(0, product.quantity) : null;
+
+const isSoldOut = (product: Product) =>
+  product.available === false || stockState(product) === 'out';
+
 
 const readCart = (): CartLine[] => {
   try {
@@ -454,12 +522,107 @@ export default function CustomerStorefront({ lang }: Props) {
     0
   );
 
+  const cartInvalid = cart.some(line => {
+    const limit = stockLimit(line.product);
+    return isSoldOut(line.product) || (limit != null && line.quantity > limit);
+  });
+
+  const cartRef = useRef(cart);
+  useEffect(() => {
+    cartRef.current = cart;
+  }, [cart]);
+
+  async function revalidateCart(announce: boolean) {
+    const current = cartRef.current;
+    const merchantId = current[0]?.product.merchant;
+    if (!merchantId) return true;
+
+    try {
+      const data = await api(`/products/?merchant=${merchantId}`);
+      const fresh = rows<Product>(data);
+      const byId = new Map(fresh.map(product => [product.id, product]));
+      const removed: string[] = [];
+      const clamped: string[] = [];
+      const next: CartLine[] = [];
+
+      current.forEach(line => {
+        const product = byId.get(line.product.id);
+        const limit = product ? stockLimit(product) : 0;
+
+        if (!product || isSoldOut(product) || limit === 0) {
+          removed.push(line.product.name);
+          return;
+        }
+
+        if (limit != null && line.quantity > limit) {
+          clamped.push(`${line.product.name} (${limit})`);
+          next.push({ product, quantity: limit });
+          return;
+        }
+
+        next.push({ product, quantity: line.quantity });
+      });
+
+      if (removed.length || clamped.length) {
+        setCart(next);
+        if (announce) {
+          setNotice('');
+          setError(
+            [
+              removed.length ? `${t.cartStockAlert} ${removed.join('، ')}` : '',
+              clamped.length ? `${t.cartStockClamped} ${clamped.join('، ')}` : ''
+            ]
+              .filter(Boolean)
+              .join(' — ')
+          );
+        }
+        return false;
+      }
+
+      setProducts(fresh.filter(product => product.available !== false));
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return;
+      // Tell the customer when returning to the tab removes or shrinks a cart
+      // line; unchanged carts announce nothing, so the alert never repeats.
+      void revalidateCart(true);
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [t]);
+
   function addProduct(product: Product) {
     if (
       cart.length &&
       cart[0].product.merchant !== product.merchant
     ) {
       setError(t.chooseStore);
+      return;
+    }
+
+    if (isSoldOut(product)) {
+      setNotice('');
+      setError(t.itemSoldOut);
+      return;
+    }
+
+    const limit = stockLimit(product);
+    const inCart =
+      cart.find(line => line.product.id === product.id)?.quantity || 0;
+
+    if (limit != null && inCart >= limit) {
+      setNotice('');
+      setError(t.maxReached);
       return;
     }
 
@@ -474,11 +637,13 @@ export default function CustomerStorefront({ lang }: Props) {
       );
 
       if (found) {
+        const cap = limit == null ? 50 : Math.min(50, limit);
         return current.map(line =>
           line.product.id === product.id
             ? {
                 ...line,
-                quantity: Math.min(50, line.quantity + 1)
+                product,
+                quantity: Math.min(cap, line.quantity + 1)
               }
             : line
         );
@@ -489,16 +654,29 @@ export default function CustomerStorefront({ lang }: Props) {
   }
 
   function changeQuantity(id: number, delta: number) {
+    const line = cart.find(item => item.product.id === id);
+    if (!line) return;
+
+    const limit = stockLimit(line.product);
+
+    if (delta > 0 && limit != null && line.quantity >= limit) {
+      setError(t.maxReached);
+      return;
+    }
+
+    setError('');
+
     setCart(current =>
       current
-        .map(line =>
-          line.product.id === id
-            ? { ...line, quantity: line.quantity + delta }
-            : line
-        )
-        .filter(
-          line => line.quantity > 0 && line.quantity <= 50
-        )
+        .map(item => {
+          if (item.product.id !== id) return item;
+          const max = limit == null ? 50 : Math.min(50, limit);
+          return {
+            ...item,
+            quantity: Math.max(0, Math.min(max, item.quantity + delta))
+          };
+        })
+        .filter(item => item.quantity > 0)
     );
   }
 
@@ -510,6 +688,12 @@ export default function CustomerStorefront({ lang }: Props) {
     setSubmitting(true);
     setError('');
     setNotice('');
+
+    const fresh = await revalidateCart(true);
+    if (!fresh) {
+      setSubmitting(false);
+      return;
+    }
 
     const key =
       globalThis.crypto?.randomUUID?.() ||
@@ -526,8 +710,8 @@ export default function CustomerStorefront({ lang }: Props) {
             quantity: line.quantity
           })),
           dropoff_address: address.trim(),
-          dropoff_latitude: dropoffLat,
-          dropoff_longitude: dropoffLng,
+          dropoff_latitude: roundCoordinate(dropoffLat),
+          dropoff_longitude: roundCoordinate(dropoffLng),
           delivery_fee: deliveryFee,
           dropoff_notes: notes.trim(),
           payment_method: 'cash',
@@ -572,6 +756,29 @@ export default function CustomerStorefront({ lang }: Props) {
               aria-label={t.search}
             />
           </div>
+
+          <nav className="customer-v2-services" aria-label={t.services}>
+            <a
+              className="customer-v2-service customer-v2-service--store"
+              href="#stores"
+            >
+              <ServiceIcon name="store" size="lg" />
+              <span>
+                <b>{t.storeService}</b>
+                <small>{t.storeServiceHint}</small>
+              </span>
+            </a>
+            <Link
+              className="customer-v2-service customer-v2-service--ride"
+              to="/ride"
+            >
+              <ServiceIcon name="vespa" size="lg" />
+              <span>
+                <b>{t.rideService}</b>
+                <small>{t.rideServiceHint}</small>
+              </span>
+            </Link>
+          </nav>
         </div>
 
         <div className="customer-v2-hero-art" aria-hidden="true">
@@ -584,7 +791,7 @@ export default function CustomerStorefront({ lang }: Props) {
 
       <div className="customer-v2-layout">
         <main className="customer-v2-main">
-          <section className="customer-v2-section">
+          <section className="customer-v2-section" id="stores">
             <div className="customer-v2-heading">
               <div>
                 <span className="customer-v2-eyebrow">DISCOVER</span>
@@ -733,13 +940,33 @@ export default function CustomerStorefront({ lang }: Props) {
                       )}
 
                       <div className="customer-v2-product-footer">
-                        <b>{money(product.price)}</b>
+                        <div className="customer-v2-price-stack">
+                          <b>{money(product.price)}</b>
+                          {stockState(product) === 'out' ? (
+                            <small className="stock-badge is-out">{t.outOfStock}</small>
+                          ) : stockState(product) === 'low' ? (
+                            <small className="stock-badge is-low">
+                              {t.lowStock} · {t.stockLeft} {product.quantity}
+                            </small>
+                          ) : null}
+                        </div>
                         <button
                           className={addedId === product.id ? 'is-added' : ''}
+                          disabled={isSoldOut(product)}
                           onClick={() => addProduct(product)}
                         >
-                          {addedId === product.id ? t.added : t.add}
-                          <span>{addedId === product.id ? '✓' : '＋'}</span>
+                          {isSoldOut(product)
+                            ? t.outOfStock
+                            : addedId === product.id
+                              ? t.added
+                              : t.add}
+                          <span>
+                            {isSoldOut(product)
+                              ? '✕'
+                              : addedId === product.id
+                                ? '✓'
+                                : '＋'}
+                          </span>
                         </button>
                       </div>
                     </div>
@@ -820,14 +1047,23 @@ export default function CustomerStorefront({ lang }: Props) {
 
           {cart.length ? (
             <div className="customer-v2-cart-lines">
-              {cart.map(line => (
+              {cart.map(line => {
+                const limit = stockLimit(line.product);
+                return (
                 <div
                   className="customer-v2-cart-line"
                   key={line.product.id}
                 >
                   <div className="customer-v2-cart-line-main">
                     <b>{line.product.name}</b>
-                    <small>{money(line.product.price)}</small>
+                    <small>
+                      {money(line.product.price)}
+                      {limit != null && (
+                        <span className="customer-v2-line-stock">
+                          {' '}· {t.stockLeft} {limit}
+                        </span>
+                      )}
+                    </small>
                   </div>
 
                   <div className="customer-v2-qty">
@@ -843,6 +1079,7 @@ export default function CustomerStorefront({ lang }: Props) {
                     <span>{line.quantity}</span>
 
                     <button
+                      disabled={limit != null && line.quantity >= limit}
                       onClick={() =>
                         changeQuantity(line.product.id, 1)
                       }
@@ -852,7 +1089,9 @@ export default function CustomerStorefront({ lang }: Props) {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
+
             </div>
           ) : (
             <div className="customer-v2-cart-empty">
@@ -923,7 +1162,7 @@ export default function CustomerStorefront({ lang }: Props) {
 
             <button
               className="customer-v2-submit"
-              disabled={!cart.length || !address.trim() || dropoffLat == null || dropoffLng == null || !activeMerchant || activeMerchant.latitude == null || activeMerchant.longitude == null || submitting}
+              disabled={!cart.length || cartInvalid || !address.trim() || dropoffLat == null || dropoffLng == null || !activeMerchant || activeMerchant.latitude == null || activeMerchant.longitude == null || submitting}
             >
               {submitting ? t.loading : t.placeOrder}
               <span>←</span>
@@ -947,7 +1186,10 @@ export default function CustomerStorefront({ lang }: Props) {
           <button
             type="button"
             className="customer-v2-cart-fab"
-            onClick={() => cartPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            onClick={() => {
+              void revalidateCart(true);
+              cartPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
           >
             <span aria-hidden="true">🛍</span>
             {t.viewCart}

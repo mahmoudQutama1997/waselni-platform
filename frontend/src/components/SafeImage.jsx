@@ -3,33 +3,22 @@ import { mediaUrl } from '../api';
 
 /**
  * Renders a backend image and keeps failures visible instead of showing a
- * silent broken-image glyph. The backend URL is shown in the tooltip and the
- * HTTP status is surfaced when it can be checked.
+ * silent broken-image glyph. The backend URL is shown in the tooltip.
+ *
+ * Failure detection stays on the <img> element on purpose: probing the media
+ * URL with fetch() turns every broken image into a cross-origin CORS/ORB
+ * console error, because media hosts do not send Access-Control-Allow-Origin.
  */
 export default function SafeImage({ src, alt = '', className = '', loading = 'lazy', decoding = 'async', ...rest }) {
   const resolved = mediaUrl(src);
   const [failed, setFailed] = useState('');
-  const [status, setStatus] = useState('');
 
   useEffect(() => {
     setFailed('');
-    setStatus('');
   }, [resolved]);
 
-  async function reportFailure() {
-    let code = '';
-    if (/^https?:/i.test(resolved)) {
-      try {
-        const response = await fetch(resolved, { method: 'HEAD' });
-        code = String(response.status);
-      } catch {
-        code = 'NET';
-      }
-    } else {
-      code = 'ERR';
-    }
-    console.warn('[waselni:image] failed to load', resolved, code);
-    setStatus(code);
+  function reportFailure() {
+    console.warn('[waselni:image] failed to load', resolved);
     setFailed(resolved);
   }
 
@@ -45,7 +34,7 @@ export default function SafeImage({ src, alt = '', className = '', loading = 'la
     return (
       <span className={`image-missing ${className}`.trim()} role="img" aria-label={alt} title={`تعذر تحميل الصورة: ${failed}`}>
         <b>!</b>
-        <small>{status || 'IMG'}</small>
+        <small>IMG</small>
       </span>
     );
   }

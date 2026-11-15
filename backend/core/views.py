@@ -11,7 +11,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
 from django.db import connection, transaction
-from django.db.models import Sum, Q
+from django.db.models import Sum, Q, F
 from django.http import FileResponse
 from django.utils import timezone
 from rest_framework import generics, viewsets
@@ -78,6 +78,132 @@ def publish_captain_eligibility(user):
     elig = enforce_online_invariant(profile)
     async_to_sync(layer.group_send)(f"user_{user.id}", {"type": "order_event",
         "payload": {"type": "captain.eligibility", "eligibility": elig}})
+
+
+def admin_user_ids():
+    return list(User.objects.filter(Q(role="admin") | Q(is_superuser=True)).values_list("id", flat=True))
+
+
+def notify_user_ids(user_ids, event, order=None, payload=None):
+    """Persist one notification per user and push it over the same private socket."""
+    user_ids = sorted({int(uid) for uid in user_ids if uid})
+    if not user_ids:
+        return []
+    payload = payload or {}
+    order_id = order.id if order is not None else None
+    layer = get_channel_layer()
+    created = []
+    for uid in user_ids:
+        row = Notification.objects.create(user_id=uid, event=event, order=order, payload=payload)
+        created.append(row)
+        if layer:
+            data = {"id": row.id, "event": row.event, "order": order_id, "payload": row.payload,
+                    "is_read": False, "created_at": row.created_at.isoformat()}
+            async_to_sync(layer.group_send)(f"user_{uid}", {"type": "order_event",
+                "payload": {"type": "notification.created", "notification": data}})
+    return created
+
+
+def order_audience(order, exclude=()):
+    ids = set()
+    if order.customer_id:
+        ids.add(order.customer_id)
+    if order.merchant_id:
+        merchant_user = getattr(order.merchant, "user_id", None)
+        if merchant_user:
+            ids.add(merchant_user)
+    if order.captain_id:
+        captain_user = getattr(order.captain, "user_id", None)
+        if captain_user:
+            ids.add(captain_user)
+    return ids - {int(uid) for uid in exclude if uid}
+
+
+def notify_order_event(order, event, exclude=(), payload=None, extra_users=()):
+    return notify_user_ids(order_audience(order, exclude) | {int(uid) for uid in extra_users if uid},
+                           event, order=order, payload=payload)
+
+
+def notify_order_created(order):
+    if order.merchant_id:
+        notify_order_event(order, "order.created", exclude={order.customer_id}, payload={
+            "customer_name": order.customer.get_full_name() or order.customer.username,
+            "total": str(order.total), "items_count": len(order.items or []),
+            "order_type": order.order_type,
+        }, extra_users=admin_user_ids())
+    if order.order_type == "ride":
+        notify_user_ids(eligible_captain_user_ids(order), "order.available", order=order,
+                        payload={"status": "new", "order_type": "ride"})
+
+
+class StockUnavailable(Exception):
+    def __init__(self, shortfalls):
+        self.shortfalls = shortfalls
+
+
+def reserve_stock(items):
+    """Reserve tracked quantities with conditional updates (safe under concurrency).
+
+    Every row is decremented only when the current count still covers the
+    requested quantity, so two concurrent orders cannot both take the last unit.
+    Raises StockUnavailable to roll back earlier rows of the same order.
+    """
+    shortfalls = []
+    for row in items or []:
+        if not row.get("stock_tracked"):
+            continue
+        try:
+            product_id, quantity = int(row.get("product_id")), int(row.get("quantity", 0))
+        except (TypeError, ValueError):
+            raise ValidationError({"items": "Invalid order item."})
+        if quantity <= 0:
+            continue
+        updated = Product.objects.filter(pk=product_id, quantity__gte=quantity).update(
+            quantity=F("quantity") - quantity)
+        if not updated:
+            product = Product.objects.filter(pk=product_id).only("name", "quantity").first()
+            shortfalls.append({
+                "product_id": product_id,
+                "name": row.get("name") or (product.name if product else ""),
+                "available": product.quantity if product else 0,
+                "requested": quantity,
+            })
+    if shortfalls:
+        raise StockUnavailable(shortfalls)
+
+
+def restore_order_stock(order):
+    """Return reserved stock exactly once. Caller holds a row lock on the order."""
+    if order.stock_restored_at or order.order_type != "store":
+        return False
+    for row in order.items or []:
+        if not row.get("stock_tracked"):
+            continue
+        try:
+            product_id, quantity = int(row.get("product_id")), int(row.get("quantity", 0))
+        except (TypeError, ValueError):
+            continue
+        if quantity <= 0:
+            continue
+        Product.objects.filter(pk=product_id).update(quantity=F("quantity") + quantity)
+    order.stock_restored_at = timezone.now()
+    return True
+
+
+def notify_stock_changes(before, after):
+    """Notify merchants only when a count crosses the low or zero boundary."""
+    for product in after:
+        previous = before.get(product.id)
+        if previous is None or product.quantity is None:
+            continue
+        merchant_user = getattr(product.merchant, "user_id", None)
+        if not merchant_user:
+            continue
+        payload = {"product_id": product.id, "name": product.name, "quantity": product.quantity}
+        if product.quantity <= 0 < previous:
+            notify_user_ids({merchant_user} | set(admin_user_ids()), "stock.out", payload=payload)
+        elif previous > product.low_stock_threshold >= product.quantity > 0:
+            notify_user_ids({merchant_user}, "stock.low", payload=payload)
 
 
 class RegisterView(APIView):
@@ -688,6 +814,29 @@ class ProductViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         if self.request.user.role != "merchant": raise PermissionDenied("Only merchants can delete products.")
         instance.delete()
+    @action(detail=True, methods=["post"])
+    def stock(self, request, pk=None):
+        """Adjust tracked stock by a delta under a row lock so taps cannot be lost."""
+        if request.user.role != "merchant":
+            raise PermissionDenied("Only merchants can change stock.")
+        try:
+            delta = int(request.data.get("delta"))
+        except (TypeError, ValueError):
+            return Response({"detail": "delta must be an integer."}, status=400)
+        if delta == 0:
+            return Response({"detail": "delta must not be zero."}, status=400)
+        with transaction.atomic():
+            product = (Product.objects.select_for_update().select_related("merchant")
+                       .filter(pk=pk, merchant__user=request.user).first())
+            if product is None:
+                raise NotFound("Product not found.")
+            if product.quantity is None:
+                return Response({"detail": "This product does not track stock."}, status=400)
+            previous = product.quantity
+            product.quantity = max(0, min(previous + delta, 1000000))
+            product.save(update_fields=["quantity"])
+        notify_stock_changes({product.id: previous}, [product])
+        return Response(self.get_serializer(product).data)
 
 class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
@@ -713,15 +862,47 @@ class OrderViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         request_key = request.headers.get("Idempotency-Key", "").strip()[:64]
         if request_key:
-            order, created = Order.objects.get_or_create(
-                customer=request.user, request_key=request_key,
-                defaults=serializer.validated_data,
-            )
-        else:
-            order = serializer.save(customer=request.user)
-            created = True
+            existing = Order.objects.filter(customer=request.user, request_key=request_key).first()
+            if existing:
+                return Response(self.get_serializer(existing).data, status=200)
+        items = serializer.validated_data.get("items") or []
+        tracked_ids = [row["product_id"] for row in items if row.get("stock_tracked")]
+        before = {p.id: p.quantity for p in Product.objects.filter(pk__in=tracked_ids).only("id", "quantity")}
+        duplicate = None
+        try:
+            with transaction.atomic():
+                if request_key:
+                    duplicate = Order.objects.filter(customer=request.user, request_key=request_key).first()
+                    if duplicate:
+                        transaction.set_rollback(True)
+                if not duplicate:
+                    reserve_stock(items)
+                    if request_key:
+                        order, created = Order.objects.get_or_create(
+                            customer=request.user, request_key=request_key,
+                            defaults=serializer.validated_data,
+                        )
+                        if not created:
+                            duplicate = order
+                            transaction.set_rollback(True)
+                    else:
+                        order = serializer.save(customer=request.user)
+                        created = True
+        except StockUnavailable as exc:
+            names = ", ".join(f"{row['name']} ({row['available']})" for row in exc.shortfalls)
+            notify_user_ids({request.user.id}, "stock.out", payload={
+                "products": exc.shortfalls, "message": names,
+            })
+            first = exc.shortfalls[0]
+            raise ValidationError({"items": f"Only {first['available']} of {first['name']} are available."})
+        if duplicate:
+            return Response(self.get_serializer(duplicate).data, status=200)
         if created:
             publish_order_event(order, "order.created")
+            notify_order_created(order)
+            if tracked_ids:
+                after = Product.objects.select_related("merchant").filter(pk__in=tracked_ids)
+                notify_stock_changes(before, list(after))
         return Response(self.get_serializer(order).data, status=201 if created else 200)
 
     @action(detail=False, methods=["get"])
@@ -810,7 +991,19 @@ class OrderViewSet(viewsets.ModelViewSet):
             created = True
         if created:
             publish_order_event(order, "order.created")
+            notify_order_created(order)
         return Response(self.get_serializer(order).data, status=201 if created else 200)
+
+    @action(detail=False, methods=["get"])
+    def tracking(self, request):
+        """Live delivery tracking for the merchant's own active store orders."""
+        if request.user.role != "merchant":
+            raise PermissionDenied("Merchant account required.")
+        qs = self.get_queryset().filter(
+            order_type="store", captain__isnull=False,
+            status__in=("assigned", "picked_up", "delivering"),
+        ).order_by("-updated_at")
+        return Response(self.get_serializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"])
     def accept(self, request, pk=None):
@@ -836,6 +1029,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.accepted_at = timezone.now()
             order.save()
         publish_order_event(order)
+        notify_order_event(order, "order.accepted", exclude={request.user.id}, payload={"prep_minutes": minutes})
         return Response(self.get_serializer(order).data)
 
     @action(detail=True, methods=["post"])
@@ -859,7 +1053,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         new_status = request.data.get("status")
         # Existing assigned/in-progress orders may be completed even after a subscription expires.
         transitions = {
-            "merchant": {"preparing": {"ready"}},
+            "merchant": {"new": {"cancelled"}, "preparing": {"ready"}},
             "captain": {"assigned": {"picked_up"}, "picked_up": {"delivering"}, "delivering": {"completed"}},
             "admin": {"new": {"cancelled"}, "preparing": {"cancelled"}, "ready": {"cancelled"}, "assigned": {"cancelled"}},
             "customer": {"new": {"cancelled"}},
@@ -882,6 +1076,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.status = new_status
             if new_status == "ready":
                 order.ready_at = timezone.now()
+            if new_status == "cancelled":
+                restore_order_stock(order)
             order.save()
             if new_status == "completed" and order.order_type == "store" and order.payment_method == "cash" and order.merchant_id and order.captain_id:
                 CashSettlement.objects.get_or_create(
@@ -890,6 +1086,16 @@ class OrderViewSet(viewsets.ModelViewSet):
                               "amount": order.subtotal, "reference": uuid.uuid4().hex[:12].upper()},
                 )
         publish_order_event(order, "order.ready" if new_status == "ready" else "order.updated")
+        if new_status == "cancelled":
+            notify_order_event(order, "order.cancelled", exclude={request.user.id},
+                               payload={"status": "cancelled"},
+                               extra_users=set(admin_user_ids()) - {request.user.id})
+        else:
+            notify_order_event(order, "order.ready" if new_status == "ready" else "order.status",
+                               exclude={request.user.id}, payload={"status": new_status})
+            if new_status == "ready":
+                notify_user_ids(eligible_captain_user_ids(order), "order.available", order=order,
+                                payload={"status": "ready", "order_type": order.order_type})
         return Response(self.get_serializer(order).data)
 
     @action(detail=True, methods=["post"])
@@ -919,6 +1125,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.captain_accepted_at = timezone.now()
             order.save(update_fields=["captain", "status", "captain_accepted_at", "updated_at"])
         publish_order_event(order)
+        notify_order_event(order, "order.assigned", exclude={request.user.id}, payload={"status": "assigned"})
         return Response(self.get_serializer(order).data)
 
 class SettlementViewSet(viewsets.ModelViewSet):
@@ -1001,6 +1208,34 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return self.queryset if self.request.user.role == "admin" else self.queryset.filter(user=self.request.user)
     def perform_create(self, serializer): serializer.save(user=self.request.user)
+
+class NotificationListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = Notification.objects.filter(user=request.user)
+        if request.query_params.get("unread") in ("1", "true", "yes"):
+            qs = qs.filter(is_read=False)
+        return Response({
+            "results": NotificationSerializer(qs[:100], many=True).data,
+            "unread": Notification.objects.filter(user=request.user, is_read=False).count(),
+        })
+
+class NotificationReadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, notification_id=None):
+        qs = Notification.objects.filter(user=request.user)
+        if notification_id is None:
+            updated = qs.filter(is_read=False).update(is_read=True)
+            return Response({"updated": updated, "unread": 0})
+        row = qs.filter(pk=notification_id).first()
+        if row is None:
+            raise NotFound("Notification not found.")
+        if not row.is_read:
+            row.is_read = True
+            row.save(update_fields=["is_read"])
+        return Response(NotificationSerializer(row).data)
 
 class MerchantReportsView(APIView):
     permission_classes = [IsAuthenticated]

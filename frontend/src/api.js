@@ -37,6 +37,18 @@ export function mediaUrl(value){
   }
 }
 
+/**
+ * Round a map/GPS coordinate to the 6-decimal precision the backend stores.
+ * Map taps and the Geolocation API return floats with 15+ digits, which exceed
+ * the backend's DecimalField(max_digits=9, decimal_places=6) and get rejected.
+ * One unit of the last decimal is under 12 cm, so the real location is unchanged.
+ */
+export function roundCoordinate(value){
+  const number = Number(value);
+  if (!Number.isFinite(number)) return value;
+  return Number(number.toFixed(6));
+}
+
 export function token(){ return localStorage.getItem('waselni_access'); }
 export function clearAuth(){
   localStorage.removeItem('waselni_access');

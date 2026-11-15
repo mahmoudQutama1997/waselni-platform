@@ -66,8 +66,22 @@ class Product(models.Model):
     image = models.ImageField(upload_to="products/", blank=True, null=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     available = models.BooleanField(default=True)
+    # NULL means the product predates inventory tracking: it keeps selling on
+    # the available flag alone. New products are created with an explicit count.
+    quantity = models.PositiveIntegerField(null=True, blank=True)
+    low_stock_threshold = models.PositiveIntegerField(default=5)
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return self.name
+
+    @property
+    def stock_status(self):
+        if self.quantity is None:
+            return "untracked"
+        if self.quantity <= 0:
+            return "out"
+        if self.quantity <= self.low_stock_threshold:
+            return "low"
+        return "in"
 
 class Order(models.Model):
     TYPES = [("ride","Ride"),("parcel","Parcel"),("store","Store")]
@@ -103,6 +117,8 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     request_key = models.CharField(max_length=64, null=True, blank=True)
+    # Set exactly once when a cancelled order returns its reserved stock.
+    stock_restored_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -146,6 +162,25 @@ class SupportTicket(models.Model):
     message = models.TextField()
     status = models.CharField(max_length=20, choices=STATUSES, default="open")
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class Notification(models.Model):
+    """Persisted in-app notification for one user.
+
+    ``event`` is a stable identifier ("order.created", "stock.out", …) and
+    ``payload`` carries only the data needed to render it in the user's
+    language; the client never receives another user's notifications.
+    """
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")
+    event = models.CharField(max_length=40)
+    order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True, blank=True, related_name="notifications")
+    payload = models.JSONField(default=dict, blank=True)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["user", "is_read", "-created_at"], name="notif_user_read_created")]
 
 
 class Subscription(models.Model):

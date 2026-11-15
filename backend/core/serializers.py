@@ -119,12 +119,36 @@ class MerchantProfileSerializer(serializers.ModelSerializer):
             _delete_replaced_upload(instance, field, old_name)
         return instance
 
+class AvailabilityField(serializers.BooleanField):
+    """Keep a product available when an HTML form omits the checkbox.
+
+    DRF treats a missing checkbox in multipart input as False, which silently
+    hid products created from the merchant form. Omitted values now use the
+    model default (True); explicit values from any client are still honored,
+    and partial updates that omit the field keep the stored value.
+    """
+
+    default_empty_html = True
+
+
 class ProductSerializer(serializers.ModelSerializer):
     merchant_name = serializers.CharField(source="merchant.shop_name", read_only=True)
+    stock_status = serializers.CharField(read_only=True)
+    available = AvailabilityField(default=True)
     class Meta:
         model = Product
         fields = "__all__"
         read_only_fields = ["merchant"]
+
+    def validate_quantity(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Quantity cannot be negative.")
+        return value
+
+    def validate_low_stock_threshold(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Low-stock threshold cannot be negative.")
+        return value
 
     def validate_image(self, value):
         return validate_image_upload(value)
@@ -220,9 +244,15 @@ class OrderSerializer(serializers.ModelSerializer):
                         product = Product.objects.get(pk=product_id, merchant=merchant, available=True)
                     except Product.DoesNotExist:
                         raise serializers.ValidationError({"items": f"Product {product_id} is unavailable."})
+                    # The final quantity check runs inside the creation transaction
+                    # (reserve_stock) so concurrent orders cannot oversell.
                     line = product.price * quantity
                     subtotal += line
-                    normalized.append({"product_id": product.id, "name": product.name, "quantity": quantity, "unit_price": str(product.price), "line_total": str(line)})
+                    normalized.append({
+                        "product_id": product.id, "name": product.name, "quantity": quantity,
+                        "unit_price": str(product.price), "line_total": str(line),
+                        "stock_tracked": product.quantity is not None,
+                    })
                 attrs["items"] = normalized
                 attrs["subtotal"] = subtotal
                 # Persist the merchant pickup point on every store order so admin,
@@ -265,3 +295,9 @@ class SupportTicketSerializer(serializers.ModelSerializer):
         model = SupportTicket
         fields = "__all__"
         read_only_fields = ["user", "status", "created_at"]
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = "__all__"
+        read_only_fields = ["user", "event", "order", "payload", "created_at"]
