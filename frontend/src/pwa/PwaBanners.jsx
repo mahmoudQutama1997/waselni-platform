@@ -83,7 +83,7 @@ function isIosDevice() {
   return /iphone|ipad|ipod/i.test(navigator.userAgent)
 }
 
-export default function PwaBanners({ lang = 'ar' }) {
+export default function PwaBanners({ lang = 'ar', showInstallPrompt = true }) {
   const copy = COPY[lang] || COPY.ar
   const [installEvent, setInstallEvent] = useState(null)
   const [iosOpen, setIosOpen] = useState(false)
@@ -164,7 +164,7 @@ export default function PwaBanners({ lang = 'ar' }) {
     window.setTimeout(() => window.location.reload(), 1200)
   }
 
-  const canInstall = !installed && !dismissed && (installEvent || isIosDevice())
+  const canInstall = showInstallPrompt && !installed && !dismissed && (installEvent || isIosDevice())
 
   if (!updateReady && online && !canInstall) return null
 

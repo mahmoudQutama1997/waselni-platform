@@ -101,7 +101,58 @@ function App(){
  async function signUp(e){e.preventDefault();setRegisterError('');setRegisterNotice('');const fd=new FormData(e.currentTarget);fd.set('role','customer');try{const result=await api('/auth/register/',{method:'POST',body:fd});setRegisterNotice(`${result.message} Username: ${result.username}`);setRegistering(false)}catch(x){setRegisterError(x.message)}}
  function signOut(){clearStadiaKey();clearAuth();setMe(null)}
  async function changeInitialPassword(e){e.preventDefault();setPasswordError('');const fd=new FormData(e.currentTarget);try{await api('/account/change-password/',{method:'POST',body:JSON.stringify({current_password:fd.get('current_password'),new_password:fd.get('new_password')})});setMe(await api('/me/'))}catch(x){setPasswordError(x.message)}}
- if(!me)return <main className="login-shell"><section className="login-card auth-card"><div className="brand-mark">و</div><h1>{t.brand}</h1><p>{APP_ROLE==='all'?t.tagline:appRoleLabel}</p><label>{t.language}</label><select value={lang} onChange={e=>setLang(e.target.value)}><option value="ar">العربية</option><option value="he">עברית</option><option value="en">English</option></select>{!registering?<><form onSubmit={signIn}><label>{t.username}</label><input name="username" required/><label>{t.password}</label><input name="password" type="password" required/><button>{t.enter}</button>{error&&<p className="error">{error}</p>}</form>{(APP_ROLE==='customer'||APP_ROLE==='all')&&<button type="button" className="secondary auth-switch" onClick={()=>{setRegistering(true);setError('');setRegisterNotice('')}}>{t.createCustomerAccount}</button>}</>:<><h3>{t.registerTitle}</h3><form onSubmit={signUp} className="form-stack registration-form" encType="multipart/form-data"><input type="hidden" name="role" value="customer"/><p className="note">{t.registerNote}</p><label>{t.username}<input name="username" required minLength="3" autoComplete="username"/></label><label>{t.firstName}<input name="first_name" required/></label><label>{t.lastName}<input name="last_name"/></label><label>{t.phone}<input name="phone" required/></label><label>{t.email}<input name="email" type="email"/></label><label>{t.password}<input name="password" type="password" minLength="8" required autoComplete="new-password"/></label><label>{t.profileImage}<input name="profile_image" type="file" accept="image/png,image/jpeg,image/webp"/></label><div data-role-field="merchant" hidden><label>اسم المتجر<input name="shop_name"/></label><label>تصنيف المتجر<input name="category" placeholder="general"/></label><label>وصف المتجر<textarea name="description"/></label><label>عنوان المتجر<input name="address"/></label><label>شعار المتجر<input name="store_image" type="file" accept="image/png,image/jpeg,image/webp"/></label><label>صورة الغلاف<input name="cover_image" type="file" accept="image/png,image/jpeg,image/webp"/></label></div><div data-role-field="captain" hidden><label>نوع المركبة<select name="vehicle_type"><option value="motorcycle">دراجة نارية</option><option value="car">سيارة</option><option value="truck">شاحنة</option></select></label><label>موديل المركبة<input name="vehicle_model"/></label><label>رقم اللوحة<input name="plate_number"/></label><label>نوع التصريح<select name="permit_type"><option value="west_bank">الضفة الغربية</option><option value="jerusalem_id">هوية القدس</option><option value="work_permit">تصريح عمل</option></select></label><label>وثيقة الهوية / التصريح<input name="identity_document" type="file" accept=".pdf,.jpg,.jpeg,.png"/></label><label>رخصة القيادة<input name="driving_license_document" type="file" accept=".pdf,.jpg,.jpeg,.png"/></label><label>التأمين<input name="insurance_document" type="file" accept=".pdf,.jpg,.jpeg,.png"/></label><label className="check-label"><input name="digital_undertaking" type="checkbox" value="true" required disabled/>أتعهد بصحة البيانات والالتزام بشروط العمل والسلامة في وصلني</label></div><button>{t.completeRegistration}</button>{registerError&&<p className="error">{registerError}</p>}</form>{(APP_ROLE==='customer'||APP_ROLE==='all')&&<button type="button" className="secondary auth-switch" onClick={()=>setRegistering(false)}>{t.backToLogin}</button>}</>}{registerNotice&&<p className="success-note">{registerNotice}</p>}<small>{t.rolesFooter}</small></section></main>
+ if(!me)return <>
+  <PwaBanners lang={lang} showInstallPrompt={false}/>
+  <main className="login-shell">
+   <section className="login-card auth-card">
+    <div className="brand-mark">و</div>
+    <h1>{t.brand}</h1>
+    <p>{APP_ROLE==='all'?t.tagline:appRoleLabel}</p>
+    <label>{t.language}</label>
+    <select value={lang} onChange={e=>setLang(e.target.value)}>
+     <option value="ar">العربية</option><option value="he">עברית</option><option value="en">English</option>
+    </select>
+    {!registering?<>
+     <form onSubmit={signIn}>
+      <label>{t.username}</label><input name="username" required/>
+      <label>{t.password}</label><input name="password" type="password" required/>
+      <button>{t.enter}</button>{error&&<p className="error">{error}</p>}
+     </form>
+     {(APP_ROLE==='customer'||APP_ROLE==='all')&&<button type="button" className="secondary auth-switch" onClick={()=>{setRegistering(true);setError('');setRegisterNotice('')}}>{t.createCustomerAccount}</button>}
+    </>:<>
+     <h3>{t.registerTitle}</h3>
+     <form onSubmit={signUp} className="form-stack registration-form" encType="multipart/form-data">
+      <input type="hidden" name="role" value="customer"/><p className="note">{t.registerNote}</p>
+      <label>{t.username}<input name="username" required minLength="3" autoComplete="username"/></label>
+      <label>{t.firstName}<input name="first_name" required/></label>
+      <label>{t.lastName}<input name="last_name"/></label>
+      <label>{t.phone}<input name="phone" required/></label>
+      <label>{t.email}<input name="email" type="email"/></label>
+      <label>{t.password}<input name="password" type="password" minLength="8" required autoComplete="new-password"/></label>
+      <label>{t.profileImage}<input name="profile_image" type="file" accept="image/png,image/jpeg,image/webp"/></label>
+      <div data-role-field="merchant" hidden>
+       <label>اسم المتجر<input name="shop_name"/></label><label>تصنيف المتجر<input name="category" placeholder="general"/></label>
+       <label>وصف المتجر<textarea name="description"/></label><label>عنوان المتجر<input name="address"/></label>
+       <label>شعار المتجر<input name="store_image" type="file" accept="image/png,image/jpeg,image/webp"/></label>
+       <label>صورة الغلاف<input name="cover_image" type="file" accept="image/png,image/jpeg,image/webp"/></label>
+      </div>
+      <div data-role-field="captain" hidden>
+       <label>نوع المركبة<select name="vehicle_type"><option value="motorcycle">دراجة نارية</option><option value="car">سيارة</option><option value="truck">شاحنة</option></select></label>
+       <label>موديل المركبة<input name="vehicle_model"/></label><label>رقم اللوحة<input name="plate_number"/></label>
+       <label>نوع التصريح<select name="permit_type"><option value="west_bank">الضفة الغربية</option><option value="jerusalem_id">هوية القدس</option><option value="work_permit">تصريح عمل</option></select></label>
+       <label>وثيقة الهوية / التصريح<input name="identity_document" type="file" accept=".pdf,.jpg,.jpeg,.png"/></label>
+       <label>رخصة القيادة<input name="driving_license_document" type="file" accept=".pdf,.jpg,.jpeg,.png"/></label>
+       <label>التأمين<input name="insurance_document" type="file" accept=".pdf,.jpg,.jpeg,.png"/></label>
+       <label className="check-label"><input name="digital_undertaking" type="checkbox" value="true" required disabled/>أتعهد بصحة البيانات والالتزام بشروط العمل والسلامة في وصلني</label>
+      </div>
+      <button>{t.completeRegistration}</button>{registerError&&<p className="error">{registerError}</p>}
+     </form>
+     {(APP_ROLE==='customer'||APP_ROLE==='all')&&<button type="button" className="secondary auth-switch" onClick={()=>setRegistering(false)}>{t.backToLogin}</button>}
+    </>}
+    {registerNotice&&<p className="success-note">{registerNotice}</p>}<small>{t.rolesFooter}</small>
+   </section>
+  </main>
+ </>
  if(me.must_change_password)return <main className="login-shell"><section className="login-card"><div className="brand-mark">و</div><h1>{t.changePasswordTitle}</h1><p>{t.changePasswordNote}</p><form onSubmit={changeInitialPassword}><label>{t.currentPassword}</label><input name="current_password" type="password" required/><label>{t.newPassword}</label><input name="new_password" type="password" minLength={8} required/><button>{t.changePassword}</button>{passwordError&&<p className="error">{passwordError}</p>}</form><button className="ghost" onClick={signOut}>{t.logout}</button></section></main>
  const role=me.role
  const pageKey=location.pathname==='/'?'home':location.pathname.slice(1).split('/')[0]

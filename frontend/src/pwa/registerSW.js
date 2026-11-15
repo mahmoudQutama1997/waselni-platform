@@ -35,6 +35,9 @@ export function registerServiceWorker() {
           registration.update().catch(() => {})
         }
       })
+      registration.update().catch((error) => {
+        console.warn('Waselni service worker update check failed', error)
+      })
     } catch (error) {
       console.warn('Waselni service worker registration failed', error)
     }
