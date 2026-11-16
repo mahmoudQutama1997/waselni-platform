@@ -76,12 +76,15 @@ function useOrderAlerts(role,t,lang){
    const newForCaptain=role==='captain'&&(message.type==='order.created'||message.type==='order.ready')
    if(newForMerchant||newForCaptain){
     playOrderAlert()
-    notify(`${labels.newOrder} #${message.order_id}`,'success')
-    showOrderNotification(labels.newOrder,`${labels.order} #${message.order_id} · ${statusLabel(t,message.status)}`,`order-${message.order_id}`)
+    const orderReference=message.order_number?` #${message.order_number}`:''
+    notify(`${labels.newOrder}${orderReference}`,'success')
+    showOrderNotification(labels.newOrder,`${labels.order}${orderReference} · ${statusLabel(t,message.status)}`,`order-${message.order_id}`)
    }else if(role==='customer'){
-    notify(`${statusLabel(t,message.status)} · ${labels.order} #${message.order_id}`,'success')
+    const orderReference=message.order_number?` #${message.order_number}`:''
+    notify(`${statusLabel(t,message.status)} · ${labels.order}${orderReference}`,'success')
    }else if(role==='admin'&&message.type==='order.created'){
-    notify(`${labels.newOrder} #${message.order_id}`,'success')
+    const orderReference=message.order_number?` #${message.order_number}`:''
+    notify(`${labels.newOrder}${orderReference}`,'success')
    }
   })
   return ()=>{subscription?.close();window.removeEventListener('pointerdown',unlock);window.removeEventListener('keydown',unlock)}
@@ -250,7 +253,7 @@ function MerchantTracking({orders=[],error='',t,lang}){
   <div className="section-head"><div><h3>{t.trackingTitle}</h3><p>{t.trackingHint}</p></div><span className="tracking-live-pill"><i className={order?'is-live':''}/>{t.trackingLive}</span></div>
   {error&&<p className="error">{error}</p>}
   {!orders.length?<div className="tracking-empty"><span>🛰</span><p>{t.trackingEmpty}</p></div>:<>
-   {orders.length>1&&<label className="tracking-select">{t.trackingPick}<select value={order?.id||''} onChange={e=>setSelectedId(Number(e.target.value))}>{orders.map(o=><option key={o.id} value={o.id}>{`#${o.id} · ${o.customer_name||''} · ${statusLabel(t,o.status)}`}</option>)}</select></label>}
+   {orders.length>1&&<label className="tracking-select">{t.trackingPick}<select value={order?.id||''} onChange={e=>setSelectedId(Number(e.target.value))}>{orders.map(o=><option key={o.id} value={o.id}>{`${o.order_number} · ${o.customer_name||''} · ${statusLabel(t,o.status)}`}</option>)}</select></label>}
    {order&&<>
     <div className="tracking-meta">
      <div className="tracking-captain"><span className="mini-avatar">{order.captain_profile_image?<SafeImage src={order.captain_profile_image} alt={order.captain_name||''}/>:<span>◉</span>}</span><div><small>{t.trackingCaptain}</small><b>{order.captain_name||'—'}</b></div><span className={`tag ${order.status}`}>{statusLabel(t,order.status)}</span></div>
@@ -394,7 +397,7 @@ function ReceivedRatings({t}){
   <div className="section-head"><div><h3>{t.customerFeedback}</h3><p>{t.averageRating}</p></div></div>
   {err&&<p className="error">{err}</p>}
   {data.length?<div className="order-grid">{data.slice(0,20).map(rating=><article className="order-card" key={rating.id}>
-   <div className="card-top"><b>{t.orderPrefix} #{rating.order}</b><span className="tag">{rating.score} / 5</span></div>
+   <div className="card-top"><b>{t.orderPrefix} {rating.order_number}</b><span className="tag">{rating.score} / 5</span></div>
    <p>{t[`${rating.target_type}Role`]||t[rating.target_type]||rating.target_type}</p>
    {rating.comment&&<p>{rating.comment}</p>}
    <small>{new Date(rating.created_at).toLocaleString()}</small>
@@ -413,7 +416,7 @@ function Orders({role,t}){
  useEffect(()=>{const id=setInterval(()=>setClock(Date.now()),1000);return()=>clearInterval(id)},[]);
  const searchTerm=query.trim().toLowerCase();
  const filtered=data.filter(o=>{
-  const matchesQuery=!searchTerm||`${o.id} ${o.merchant_name||''} ${o.customer_name||''} ${o.captain_name||''} ${o.dropoff_address||''}`.toLowerCase().includes(searchTerm);
+  const matchesQuery=!searchTerm||`${o.order_number||''} ${role==='admin'?o.id:''} ${o.merchant_name||''} ${o.customer_name||''} ${o.captain_name||''} ${o.dropoff_address||''}`.toLowerCase().includes(searchTerm);
   const matchesStatus=statusFilter==='all'||(statusFilter==='active'?!['completed','cancelled'].includes(o.status):o.status===statusFilter);
   return matchesQuery&&matchesStatus;
  });
@@ -429,7 +432,7 @@ function Orders({role,t}){
  }
  function exportOrders(){
   exportCsv('waselni-orders.csv',[
-   {key:'id',label:t.csvOrderId},{key:'status',label:t.csvStatus},
+   {key:'order_number',label:t.csvOrderId},{key:'status',label:t.csvStatus},
    {key:'customer_name',label:t.csvCustomer},{key:'merchant_name',label:t.csvMerchant},
    {key:'captain_name',label:t.csvCaptain},{key:'total',label:t.csvTotal},
    {key:'delivery_fee',label:t.csvDeliveryFee},{key:'created_at',label:t.csvDate},
@@ -442,7 +445,7 @@ function Orders({role,t}){
   {err&&<p className="error">{err}</p>}
   {!filtered.length&&(searchTerm||statusFilter!=='all'?<EmptyText text={t.noSearchResults}/>:<Empty t={t}/>)}
   <div className="order-grid">{filtered.map(o=><article className="order-card" key={o.id}>
-   <div className="card-top"><b>#{o.id}</b><span className={`tag ${o.status}`}>{statusLabel(t,o.status)}</span></div>
+   <div className="card-top"><b>{o.order_number}</b><span className={`tag ${o.status}`}>{statusLabel(t,o.status)}</span></div>
    <div className="order-times"><small>{t.createdAt}: {o.created_at?new Date(o.created_at).toLocaleString():'—'}</small><small>{t.updatedAt}: {o.updated_at?new Date(o.updated_at).toLocaleString():'—'}</small></div>
    <h3 className="order-title"><ServiceIcon size="sm" name={o.order_type==='ride'?'vespa':o.order_type==='parcel'?'truck':'store'}/>{o.order_type==='ride'?t.rideService:o.order_type==='parcel'?(t.shipping||t.orders):(o.merchant_name||o.order_type)}</h3>
    <OrderProgress order={o} t={t}/>
@@ -458,16 +461,16 @@ function Orders({role,t}){
    {o.dropoff_notes&&<p className="note">{t.deliveryDetails||'تفاصيل التوصيل'}: {o.dropoff_notes}</p>}
    {['new','ready','assigned','picked_up','delivering'].includes(o.status)&&o.pickup_latitude!=null&&o.dropoff_latitude!=null&&(role==='customer'||role==='captain')&&<RideRouteMap order={o} t={t}/>}
    <div className="item-list">{(o.items||[]).map((i,n)=><span key={n}>{i.name} × {i.quantity}{i.line_total!=null&&<b> · {money(i.line_total)}</b>}</span>)}</div>
-   {role==='merchant'&&o.status==='new'&&<div className="actions"><select value={mins[o.id]||10} onChange={e=>setMins({...mins,[o.id]:Number(e.target.value)})}>{[10,15,20,30,40].map(n=><option key={n}>{n}</option>)}</select><button disabled={busy===o.id} onClick={()=>act(`/orders/${o.id}/accept/`,{prep_minutes:mins[o.id]||10},o.id)}>{busy===o.id?t.actionInProgress:t.accept}</button><button type="button" className="secondary danger" disabled={busy===o.id} onClick={()=>confirmAction({title:t.rejectOrder,message:`${t.orderNumber} #${o.id} · ${money(o.total)}`,confirmLabel:t.rejectConfirm,cancelLabel:t.back}).then(ok=>{if(ok)act(`/orders/${o.id}/status/`,{status:'cancelled'},o.id)})}>{t.rejectOrder}</button></div>}
+   {role==='merchant'&&o.status==='new'&&<div className="actions"><select value={mins[o.id]||10} onChange={e=>setMins({...mins,[o.id]:Number(e.target.value)})}>{[10,15,20,30,40].map(n=><option key={n}>{n}</option>)}</select><button disabled={busy===o.id} onClick={()=>act(`/orders/${o.id}/accept/`,{prep_minutes:mins[o.id]||10},o.id)}>{busy===o.id?t.actionInProgress:t.accept}</button><button type="button" className="secondary danger" disabled={busy===o.id} onClick={()=>confirmAction({title:t.rejectOrder,message:`${t.orderNumber} ${o.order_number} · ${money(o.total)}`,confirmLabel:t.rejectConfirm,cancelLabel:t.back}).then(ok=>{if(ok)act(`/orders/${o.id}/status/`,{status:'cancelled'},o.id)})}>{t.rejectOrder}</button></div>}
    {role==='merchant'&&o.status==='accepted'&&<button disabled={busy===o.id} onClick={()=>act(`/orders/${o.id}/status/`,{status:'preparing'},o.id)}>{t.startPreparing}</button>}
    {role==='merchant'&&o.status==='preparing'&&<button disabled={busy===o.id} onClick={()=>act(`/orders/${o.id}/status/`,{status:'ready'},o.id)}>{busy===o.id?t.actionInProgress:t.ready}</button>}
-   {role==='captain'&&(o.status==='ready'||(o.order_type==='ride'&&o.status==='new'))&&!o.captain&&<button onClick={()=>confirmAction({title:t.accept,message:`${t.orderNumber} #${o.id} · ${money(o.delivery_fee)}`,confirmLabel:t.captainAcceptPrice}).then(ok=>{if(ok)act(`/orders/${o.id}/assign/`,{accepted_delivery_fee:String(o.delivery_fee)})})}>{t.captainAcceptPrice} · {money(o.delivery_fee)}</button>}
+   {role==='captain'&&(o.status==='ready'||(o.order_type==='ride'&&o.status==='new'))&&!o.captain&&<button onClick={()=>confirmAction({title:t.accept,message:`${t.orderNumber} ${o.order_number} · ${money(o.delivery_fee)}`,confirmLabel:t.captainAcceptPrice}).then(ok=>{if(ok)act(`/orders/${o.id}/assign/`,{accepted_delivery_fee:String(o.delivery_fee)})})}>{t.captainAcceptPrice} · {money(o.delivery_fee)}</button>}
    {role==='captain'&&o.status==='assigned'&&o.order_type==='store'&&!o.merchant_arrived_at&&<button className="secondary" onClick={()=>act(`/orders/${o.id}/arrive/`,{})}>{t.arrivedStore||'وصلت إلى المتجر'}</button>}
    {role==='captain'&&o.status==='assigned'&&o.order_type==='ride'&&<button onClick={()=>act(`/orders/${o.id}/status/`,{status:'picked_up'})}>{t.pickup}</button>}
    {role==='captain'&&o.status==='assigned'&&o.merchant_arrived_at&&<><button onClick={()=>act(`/orders/${o.id}/status/`,{status:'picked_up'})}>{t.pickup}</button>{clock-new Date(o.merchant_arrived_at).getTime()>=10*60000&&<button className="secondary" onClick={()=>act('/delay-reports/',{order:o.id,details:t.merchantDelay||'تجاوز المتجر مدة الانتظار المجانية'})}>{t.merchantDelay||'إبلاغ عن تأخر المتجر'}</button>}</>}
    {role==='captain'&&o.status==='picked_up'&&<button onClick={()=>act(`/orders/${o.id}/status/`,{status:'delivering'})}>{t.startDelivery}</button>}
    {role==='captain'&&o.status==='delivering'&&<button onClick={()=>act(`/orders/${o.id}/status/`,{status:'awaiting_confirmation'},o.id)}>{t.confirmDelivery}</button>}
-   {role==='customer'&&<ReceiptConfirmation order={o} t={t} busy={busy===o.id} onConfirm={order=>confirmAction({title:t.confirmReceipt,message:`${t.orderNumber} #${order.id}`,confirmLabel:t.confirmReceipt,cancelLabel:t.back}).then(ok=>ok&&act(`/orders/${order.id}/status/`,{status:'completed'},order.id))}/>}
+   {role==='customer'&&<ReceiptConfirmation order={o} t={t} busy={busy===o.id} onConfirm={order=>confirmAction({title:t.confirmReceipt,message:`${t.orderNumber} ${order.order_number}`,confirmLabel:t.confirmReceipt,cancelLabel:t.back}).then(ok=>ok&&act(`/orders/${order.id}/status/`,{status:'completed'},order.id))}/>}
    <OrderActivityList order={o} t={t}/>
    {role==='customer'&&<OrderRating order={o} t={t} onSaved={reload}/>}
   </article>)}</div>
@@ -513,7 +516,7 @@ function AdminOverviewMap({stores=[],orders=[]}){
  useEffect(()=>{if(!L||!mapRef.current||mapInstance.current)return;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],10);createTileLayer({maxZoom:19}).addTo(map);layerRef.current=L.layerGroup().addTo(map);mapInstance.current=map;const id=setTimeout(()=>map.invalidateSize(),150);return()=>{clearTimeout(id);map.remove();mapInstance.current=null;layerRef.current=null}},[]);
  useEffect(()=>{const map=mapInstance.current,layer=layerRef.current;if(!map||!layer)return;layer.clearLayers();const bounds=[];const popup=(title,sub)=>{const el=document.createElement('div');const b=document.createElement('b');b.textContent=title||'—';el.appendChild(b);if(sub){const p=document.createElement('p');p.textContent=sub;el.appendChild(p)}return el};
   stores.forEach(s=>{if(s.latitude==null||s.longitude==null)return;const pt=[Number(s.latitude),Number(s.longitude)];if(!pt.every(Number.isFinite))return;L.marker(pt,{icon:mapMarker('store')}).addTo(layer).bindPopup(popup(`${w.store}: ${s.shop_name}`,`${s.address||''} · ${s.is_open?w.open:w.closed}`));bounds.push(pt)});
-  orders.filter(o=>!['completed','cancelled'].includes(o.status)).forEach(o=>{const pts=[];if(o.pickup_latitude!=null&&o.pickup_longitude!=null)pts.push([Number(o.pickup_latitude),Number(o.pickup_longitude)]);if(o.dropoff_latitude!=null&&o.dropoff_longitude!=null)pts.push([Number(o.dropoff_latitude),Number(o.dropoff_longitude)]);pts.forEach((pt,i)=>{if(!pt.every(Number.isFinite))return;L.circleMarker(pt,{radius:8,color:'#fff',weight:2,fillColor:i?'#df4d67':'#16a36a',fillOpacity:1}).addTo(layer).bindPopup(popup(`${w.order} #${o.id} · ${i?w.dropoff:w.pickup}`,`${o.merchant_name||''} · ${o.dropoff_address||''}`));bounds.push(pt)});if(pts.length===2)L.polyline(pts,{color:'#8054c6',weight:3,dashArray:'6 7'}).addTo(layer);if(o.captain_latitude!=null&&o.captain_longitude!=null){const captainPt=[Number(o.captain_latitude),Number(o.captain_longitude)];if(captainPt.every(Number.isFinite)){L.circleMarker(captainPt,{radius:11,color:'#fff',weight:3,fillColor:'#7650bd',fillOpacity:1}).addTo(layer).bindPopup(popup(`${w.captain} · ${w.order} #${o.id}`,o.captain_location_updated_at?`${w.updated}: ${new Date(o.captain_location_updated_at).toLocaleTimeString()}`:w.location));bounds.push(captainPt)}}});
+  orders.filter(o=>!['completed','cancelled'].includes(o.status)).forEach(o=>{const pts=[];if(o.pickup_latitude!=null&&o.pickup_longitude!=null)pts.push([Number(o.pickup_latitude),Number(o.pickup_longitude)]);if(o.dropoff_latitude!=null&&o.dropoff_longitude!=null)pts.push([Number(o.dropoff_latitude),Number(o.dropoff_longitude)]);pts.forEach((pt,i)=>{if(!pt.every(Number.isFinite))return;L.circleMarker(pt,{radius:8,color:'#fff',weight:2,fillColor:i?'#df4d67':'#16a36a',fillOpacity:1}).addTo(layer).bindPopup(popup(`${w.order} ${o.order_number} · ${i?w.dropoff:w.pickup}`,`${o.merchant_name||''} · ${o.dropoff_address||''}`));bounds.push(pt)});if(pts.length===2)L.polyline(pts,{color:'#8054c6',weight:3,dashArray:'6 7'}).addTo(layer);if(o.captain_latitude!=null&&o.captain_longitude!=null){const captainPt=[Number(o.captain_latitude),Number(o.captain_longitude)];if(captainPt.every(Number.isFinite)){L.circleMarker(captainPt,{radius:11,color:'#fff',weight:3,fillColor:'#7650bd',fillOpacity:1}).addTo(layer).bindPopup(popup(`${w.captain} · ${w.order} ${o.order_number}`,o.captain_location_updated_at?`${w.updated}: ${new Date(o.captain_location_updated_at).toLocaleTimeString()}`:w.location));bounds.push(captainPt)}}});
   if(bounds.length===1)map.setView(bounds[0],13);else if(bounds.length>1)map.fitBounds(bounds,{padding:[35,35],maxZoom:14});
  },[stores,orders,lang]);
  return <div className="admin-live-map"><div ref={mapRef} className="location-picker-map"/><div className="map-legend"><span>{w.storesLegend}</span><span>{w.dropoffLegend}</span><small>{stores.filter(s=>s.latitude!=null&&s.longitude!=null).length} {w.coords} · {orders.filter(o=>!['completed','cancelled'].includes(o.status)).length} {w.active}</small></div></div>
@@ -574,7 +577,7 @@ function CustomerHome({t}){
     {error&&<p className="error">{error}</p>}
    </form>
   </section>
-  <section><div className="section-head"><h3>{t.myOrders}</h3></div><div className="order-grid">{orders.map(o=><article className="order-card" key={o.id}><b>{t.orderPrefix} #{o.id}</b><span className="tag">{statusLabel(t,o.status)}</span><p>{o.merchant_name}</p><p>{money(o.total)}</p><p>{o.dropoff_address}</p></article>)}</div>{!orders.length&&<Empty t={t}/>}</section>
+  <section><div className="section-head"><h3>{t.myOrders}</h3></div><div className="order-grid">{orders.map(o=><article className="order-card" key={o.id}><b>{t.orderPrefix} {o.order_number}</b><span className="tag">{statusLabel(t,o.status)}</span><p>{o.merchant_name}</p><p>{money(o.total)}</p><p>{o.dropoff_address}</p></article>)}</div>{!orders.length&&<Empty t={t}/>}</section>
  </>;
 }
 
@@ -661,7 +664,7 @@ function RideBooking({t,lang}){
   submitLock.current=true;setBusy(true);setError('');setNotice('');
   try{
    const result=await api('/orders/ride/',{method:'POST',headers:{'Idempotency-Key':requestKey.current},body:JSON.stringify({...form,pickup_latitude:roundCoordinate(form.pickup_latitude),pickup_longitude:roundCoordinate(form.pickup_longitude),dropoff_latitude:roundCoordinate(form.dropoff_latitude),dropoff_longitude:roundCoordinate(form.dropoff_longitude)})});
-   requestKey.current=newRequestKey();setNotice(`${t.rideCreated} #${result.id} · ${money(result.total)} · ${result.distance_km} km`);
+   requestKey.current=newRequestKey();setNotice(`${t.rideCreated} #${result.order_number} · ${money(result.total)} · ${result.distance_km} km`);
    setForm({pickup_address:'',dropoff_address:'',pickup_latitude:'',pickup_longitude:'',dropoff_latitude:'',dropoff_longitude:'',delivery_fee:'15.00',requires_checkpoint:false});
    Object.values(markers.current).forEach(marker=>mapInstance.current?.removeLayer(marker));markers.current={};setActivePoint('pickup');reload();
   }catch(x){setError(x.message)}finally{submitLock.current=false;setBusy(false)}
@@ -693,7 +696,7 @@ function RideBooking({t,lang}){
  <button disabled={busy||!validCoordinate('pickup')||!validCoordinate('dropoff')}>{busy?t.sending:t.confirmRide}</button>
  {error&&<p className="error">{error}</p>}{notice&&<p className="success-note">{notice}</p>}
  </form></section>
- <section><h3 className="list-title"><ServiceIcon name="vespa" size="sm"/>{t.myRides}</h3><div className="order-grid">{rides.map(o=><article className="order-card" key={o.id}><b>#{o.id} · {statusLabel(t,o.status)}</b><p>{o.pickup_address} → {o.dropoff_address}</p><p>{o.distance_km} km · {money(o.total)}</p>{o.captain_name&&<div className="order-person"><span className="mini-avatar">{o.captain_profile_image?<SafeImage src={o.captain_profile_image} alt={o.captain_name||''}/>:'◉'}</span>{o.captain_name}</div>}<RideRouteMap order={o} t={t}/></article>)}</div>{!rides.length&&<Empty t={t}/>}</section></>
+ <section><h3 className="list-title"><ServiceIcon name="vespa" size="sm"/>{t.myRides}</h3><div className="order-grid">{rides.map(o=><article className="order-card" key={o.id}><b>{o.order_number} · {statusLabel(t,o.status)}</b><p>{o.pickup_address} → {o.dropoff_address}</p><p>{o.distance_km} km · {money(o.total)}</p>{o.captain_name&&<div className="order-person"><span className="mini-avatar">{o.captain_profile_image?<SafeImage src={o.captain_profile_image} alt={o.captain_name||''}/>:'◉'}</span>{o.captain_name}</div>}<RideRouteMap order={o} t={t}/></article>)}</div>{!rides.length&&<Empty t={t}/>}</section></>
 }
 
 function Catalog({t}){
@@ -744,7 +747,7 @@ function Profile({t}){
  if(!profile)return <section className="panel store-profile"><div className="sk-line skeleton w-40"/><div className="sk-block skeleton profile-cover-skeleton"/><div className="sk-grid">{[0,1,2,3].map(i=><div className="sk-card" key={i}/>)}</div>{error&&<p className="error">{error}</p>}</section>
  return <section className="panel store-profile"><div className="section-head"><div><h3>{t.profile}</h3><p>{t.storeProfileSubtitle}</p></div><span className="feature-icon">◉</span></div><form onSubmit={save}><div className={`cover-upload ${coverPreview?'has-image':''}`}>{coverPreview&&<SafeImage className="cover-image" src={coverPreview} alt={profile.shop_name||''}/>}<label htmlFor="store-cover">＋ {t.changeCover}</label><input id="store-cover" type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];setCover(f||null);if(f)setCoverPreview(URL.createObjectURL(f))}}/></div><div className="store-logo-row"><label className="store-logo-upload" htmlFor="store-logo">{logoPreview?<SafeImage src={logoPreview} alt={profile.shop_name||''}/>:<span>＋</span>}<input id="store-logo" type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];setLogo(f||null);if(f)setLogoPreview(URL.createObjectURL(f))}}/></label><div><h3>{profile.shop_name}</h3><small>{t.storeLogoHint}</small></div></div><div className="profile-fields"><label>{t.storeName}<input value={profile.shop_name||''} onChange={e=>update('shop_name',e.target.value)} required/></label><label>{t.storeCategory}<input value={profile.category||''} onChange={e=>update('category',e.target.value)}/></label><label>{t.address}<input value={profile.address||''} onChange={e=>update('address',e.target.value)}/></label><label>{t.openingHours}<input value={profile.opening_hours||''} onChange={e=>update('opening_hours',e.target.value)}/></label><label className="wide-field">{t.description}<textarea rows="4" value={profile.description||''} onChange={e=>update('description',e.target.value)}/></label></div><div className="store-location-section"><h3>{t.storeLocationTitle}</h3><p className="muted-note">{t.storeLocationHint}</p><LocationPicker latitude={profile.latitude??''} longitude={profile.longitude??''} label={t.selectStoreLocation} onSelect={(lat,lng,address)=>setProfile(p=>({...p,latitude:String(roundCoordinate(lat)),longitude:String(roundCoordinate(lng)),address:address||p.address||''}))}/></div>{error&&<p className="error">{error}</p>}{notice&&<p className="success-note">{notice}</p>}<button disabled={saving}>{saving?t.saving:t.saveProfile}</button></form></section>
 }
-function Reports({t}){const [report,setReport]=useState(null),[error,setError]=useState('');useEffect(()=>{let live=true;const load=()=>api('/merchant/reports/').then(x=>{if(live){setReport(x);setError('')}}).catch(e=>live&&setError(e.message));load();const id=setInterval(load,10000);return()=>{live=false;clearInterval(id)}},[]);const rows=report?.all_orders||[];const exportOrders=()=>exportCsv('waselni-merchant-orders.csv',[{key:'id',label:t.csvOrderId},{key:'status',label:t.csvStatus},{key:'merchant_name',label:t.csvMerchant},{key:'total',label:t.csvTotal},{key:'created_at',label:t.csvDate}],rows);const exportSettlements=()=>exportCsv('waselni-merchant-settlements.csv',[{key:'order_id',label:t.csvOrderId},{key:'captain_name',label:t.csvCaptain},{key:'amount',label:t.csvAmount},{key:'settled_amount',label:t.csvSettled},{key:'outstanding_amount',label:t.csvOutstanding},{key:'created_at',label:t.csvDate}],report?.cash_settlements||[]);return <><div className="section-head"><div><h3>{t.reports}</h3><p>{t.analyticsTitle||t.reports}</p></div><div className="row-actions"><button className="secondary" disabled={!rows.length} onClick={exportOrders}>{t.exportCsv}</button><button className="secondary" disabled={!report?.cash_settlements?.length} onClick={exportSettlements}>{t.exportCsv} · {t.settlements}</button></div></div>{error&&<p className="error">{error}</p>}{!report&&!error&&<div className="stats">{[0,1,2,3].map(i=><div className="stat skeleton" key={i}/>)}</div>}{report&&<><div className="stats"><Stat icon="sales" label={t.salesTodayCompleted||'مبيعات اليوم المكتملة'} value={money(report.gross_sales_today)}/><Stat icon="orders" label={t.ordersToday||t.todayOrders} value={report.orders_today}/><Stat icon="completed" label={t.completedOrders||t.completedToday} value={report.completed_today}/><Stat icon="sales" label={t.productsDue} value={money(report.cash_products_due)}/></div><p className="note">{report.net_sales_note}</p><h3>{t.orderSettlementStatus}</h3><div className="table-wrap"><table><thead><tr><th>{t.orderPrefix}</th><th>{t.captainColumn||t.captainLabel}</th><th>{t.productsAmount}</th><th>{t.productsSettled}</th><th>{t.outstandingAmount}</th><th>{t.status}</th></tr></thead><tbody>{report.cash_settlements.map(s=><tr key={s.id}><td>#{s.order_id}</td><td>{s.captain_name}</td><td>{money(s.amount)}</td><td>{money(s.settled_amount)}</td><td>{money(s.outstanding_amount)}</td><td>{t[s.status]||s.status}</td></tr>)}</tbody></table></div></>}<h3>{t.orders}</h3><div className="table-wrap"><table><thead><tr><th>#</th><th>{t.status}</th><th>{t.total}</th><th>{t.date}</th></tr></thead><tbody>{rows.map(o=><tr key={o.id}><td>{o.id}</td><td>{statusLabel(t,o.status)}</td><td>{money(o.total)}</td><td>{new Date(o.created_at).toLocaleDateString()}</td></tr>)}</tbody></table></div></>}
+function Reports({t}){const [report,setReport]=useState(null),[error,setError]=useState('');useEffect(()=>{let live=true;const load=()=>api('/merchant/reports/').then(x=>{if(live){setReport(x);setError('')}}).catch(e=>live&&setError(e.message));load();const id=setInterval(load,10000);return()=>{live=false;clearInterval(id)}},[]);const rows=report?.all_orders||[];const exportOrders=()=>exportCsv('waselni-merchant-orders.csv',[{key:'order_number',label:t.csvOrderId},{key:'status',label:t.csvStatus},{key:'merchant_name',label:t.csvMerchant},{key:'total',label:t.csvTotal},{key:'created_at',label:t.csvDate}],rows);const exportSettlements=()=>exportCsv('waselni-merchant-settlements.csv',[{key:'order_number',label:t.csvOrderId},{key:'captain_name',label:t.csvCaptain},{key:'amount',label:t.csvAmount},{key:'settled_amount',label:t.csvSettled},{key:'outstanding_amount',label:t.csvOutstanding},{key:'created_at',label:t.csvDate}],report?.cash_settlements||[]);return <><div className="section-head"><div><h3>{t.reports}</h3><p>{t.analyticsTitle||t.reports}</p></div><div className="row-actions"><button className="secondary" disabled={!rows.length} onClick={exportOrders}>{t.exportCsv}</button><button className="secondary" disabled={!report?.cash_settlements?.length} onClick={exportSettlements}>{t.exportCsv} · {t.settlements}</button></div></div>{error&&<p className="error">{error}</p>}{!report&&!error&&<div className="stats">{[0,1,2,3].map(i=><div className="stat skeleton" key={i}/>)}</div>}{report&&<><div className="stats"><Stat icon="sales" label={t.salesTodayCompleted||'مبيعات اليوم المكتملة'} value={money(report.gross_sales_today)}/><Stat icon="orders" label={t.ordersToday||t.todayOrders} value={report.orders_today}/><Stat icon="completed" label={t.completedOrders||t.completedToday} value={report.completed_today}/><Stat icon="sales" label={t.productsDue} value={money(report.cash_products_due)}/></div><p className="note">{report.net_sales_note}</p><h3>{t.orderSettlementStatus}</h3><div className="table-wrap"><table><thead><tr><th>{t.orderPrefix}</th><th>{t.captainColumn||t.captainLabel}</th><th>{t.productsAmount}</th><th>{t.productsSettled}</th><th>{t.outstandingAmount}</th><th>{t.status}</th></tr></thead><tbody>{report.cash_settlements.map(s=><tr key={s.id}><td>{s.order_number}</td><td>{s.captain_name}</td><td>{money(s.amount)}</td><td>{money(s.settled_amount)}</td><td>{money(s.outstanding_amount)}</td><td>{t[s.status]||s.status}</td></tr>)}</tbody></table></div></>}<h3>{t.orders}</h3><div className="table-wrap"><table><thead><tr><th>{t.orderPrefix}</th><th>{t.status}</th><th>{t.total}</th><th>{t.date}</th></tr></thead><tbody>{rows.map(o=><tr key={o.id}><td>{o.order_number}</td><td>{statusLabel(t,o.status)}</td><td>{money(o.total)}</td><td>{new Date(o.created_at).toLocaleDateString()}</td></tr>)}</tbody></table></div></>}
 function Captain({t}){
  const [profile,setProfile]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[docs,setDocs]=useState({});
  async function loadProfile(){try{const d=await api('/captains/me/');setProfile(d);setError('')}catch(e){setError(e.message)}}
@@ -798,7 +801,7 @@ function Settlements({t,role,canManageFinance=false}){
  }
  function exportSettlementOrders(){
   exportCsv('waselni-cash-ledger.csv',[
-   {key:'order_id',label:t.csvOrderId},{key:'merchant_name',label:t.csvMerchant},
+   {key:'order_number',label:t.csvOrderId},{key:'merchant_name',label:t.csvMerchant},
    {key:'captain_name',label:t.csvCaptain},{key:'amount',label:t.csvAmount},
    {key:'settled_amount',label:t.csvSettled},{key:'outstanding_amount',label:t.csvOutstanding},
    {key:'status',label:t.csvStatus},{key:'created_at',label:t.csvDate},
@@ -809,7 +812,7 @@ function Settlements({t,role,canManageFinance=false}){
    {key:'reference',label:t.csvReference},{key:'captain_name',label:t.csvCaptain},
    {key:'amount',label:t.csvAmount},{key:'recorded_by',label:t.csvRecordedBy},
    {key:'created_at',label:t.csvDate},{key:'notes',label:t.csvNotes},
-   {value:row=>row.allocations.map(item=>`#${item.order_id}: ${item.amount}`).join('; '),label:t.orders},
+   {value:row=>row.allocations.map(item=>`${item.order_number}: ${item.amount}`).join('; '),label:t.orders},
   ],data?.receipts||[]);
  }
  return <>
@@ -819,7 +822,7 @@ function Settlements({t,role,canManageFinance=false}){
   {canManageFinance&&data&&<form className="panel form-stack" onSubmit={recordReceipt}>
    <h3>{t.recordReceipt}</h3>
    <label>{t.captainName}<select required value={captainId} onChange={event=>{setCaptainId(event.target.value);setOrderIds([])}}>{data.captains.map(captain=><option key={captain.id} value={captain.id}>{captain.name}</option>)}</select></label>
-   <fieldset className="form-stack"><legend>{t.selectOrders}</legend>{availableOrders.length?availableOrders.map(row=><label className="check-label" key={row.id}><input type="checkbox" checked={orderIds.includes(row.id)} onChange={event=>setOrderIds(current=>event.target.checked?[...current,row.id]:current.filter(id=>id!==row.id))}/>{t.orderPrefix} #{row.order_id} · {t.outstandingAmount}: {money(row.outstanding_amount)}</label>):<p>{t.noOutstandingOrders}</p>}</fieldset>
+   <fieldset className="form-stack"><legend>{t.selectOrders}</legend>{availableOrders.length?availableOrders.map(row=><label className="check-label" key={row.id}><input type="checkbox" checked={orderIds.includes(row.id)} onChange={event=>setOrderIds(current=>event.target.checked?[...current,row.id]:current.filter(id=>id!==row.id))}/>{t.orderPrefix} {row.order_number} · {t.outstandingAmount}: {money(row.outstanding_amount)}</label>):<p>{t.noOutstandingOrders}</p>}</fieldset>
    <p>{t.selectedOutstanding}: <b>{money(selectedBalance)}</b></p>
    <label>{t.amount}<input type="number" min="0.01" max={selectedBalance.toFixed(2)} step="0.01" value={amount} onChange={event=>setAmount(event.target.value)} required/></label>
    <label>{t.transactionReference}<input value={reference} onChange={event=>setReference(event.target.value)} maxLength={100} required/></label>
@@ -828,7 +831,7 @@ function Settlements({t,role,canManageFinance=false}){
   </form>}
   <h3>{t.orderSettlementStatus}</h3>
   <div className="order-grid">{(data?.orders||[]).map(row=><article className="order-card" key={row.id}>
-   <div className="card-top"><b>{t.orderPrefix} #{row.order_id}</b><span className="tag">{t[row.status]||t.outstanding}</span></div>
+   <div className="card-top"><b>{t.orderPrefix} {row.order_number}</b><span className="tag">{t[row.status]||t.outstanding}</span></div>
    {canManageFinance&&<p>{t.captainName}: {row.captain_name}</p>}
    {role!=='merchant'&&<p>{t.merchantName}: {row.merchant_name}</p>}
    <p>{t.productsAmount}: <b>{money(row.amount)}</b></p>
@@ -840,7 +843,7 @@ function Settlements({t,role,canManageFinance=false}){
   <div className="order-grid">{(data?.receipts||[]).map(receipt=><article className="order-card" key={receipt.id}>
    <div className="card-top"><b>{receipt.reference}</b><span className="tag">{money(receipt.amount)}</span></div>
    <p>{t.captainName}: {receipt.captain_name}</p>
-   {receipt.allocations.map(item=><p key={item.order_id}>{t.orderPrefix} #{item.order_id}: {money(item.amount)}</p>)}
+   {receipt.allocations.map(item=><p key={item.order_id}>{t.orderPrefix} {item.order_number}: {money(item.amount)}</p>)}
    <p>{t.recordedBy}: {receipt.recorded_by||'—'} · {new Date(receipt.created_at).toLocaleString()}</p>
    {receipt.notes&&<p className="note">{receipt.notes}</p>}
   </article>)}</div>
@@ -875,7 +878,7 @@ function Admin({t}){
  {tab==='captains'&&<CaptainManagement t={t} captains={data.captains} busy={busy} update={update} reload={load}/>}
  {tab==='merchants'&&<section className="panel"><h3>{t.merchantManagement}</h3>{data.stores.length?data.stores.map(m=><article className="admin-row admin-store-row" key={m.id}><div className="admin-store-head"><SafeImage src={m.image} alt={m.shop_name||''}/><div><b>{m.shop_name}</b><small>{t.owner}: {m.owner_name} · {m.username}</small><small>{m.category} · {m.address||'—'}</small><small>{t.productsCountLabel}: {m.product_count} · {new Date(m.created_at).toLocaleDateString()}</small><span className={`tag ${m.is_open?'ready':'new'}`}>{m.is_open?t.openStore:t.storeInactive}</span></div><button className="secondary" disabled={busy===`store-${m.id}`} onClick={async()=>{setBusy(`store-${m.id}`);try{await api(`/admin/stores/${m.id}/`,{method:'PATCH',body:JSON.stringify({is_open:!m.is_open})});await load()}catch(e){setErr(e.message)}finally{setBusy('')}}}>{m.is_open?t.deactivateStore:t.activateStore}</button></div>{m.cover_image&&<SafeImage className="admin-store-cover" src={m.cover_image} alt={m.shop_name||''}/>}<div className="admin-store-products">{m.products.map(p=><div key={p.id}><SafeImage src={p.image} alt={p.name||''}/><span><b>{p.name}</b><small>{money(p.price)} · {p.available?t.availableShort:t.unavailableShort}</small></span></div>)}</div></article>):<EmptyText text={t.noMerchants}/>}</section>}
  {tab==='orders'&&<section className="panel"><h3>{t.orderManagement}</h3><AdminOrders rows={data.orders} t={t}/></section>}
- {tab==='tickets'&&<section className="panel"><h3>{t.ticketManagement}</h3>{data.tickets.length?data.tickets.map(x=><article className="admin-row" key={x.id}><div><b>#{x.id} · {x.subject}</b><small>{x.username} · {new Date(x.created_at).toLocaleString()}{x.order_id?` · ${t.orderPrefix} #${x.order_id}`:''}</small><p>{x.message}</p><span className="tag">{statusLabel(t,x.status)}</span></div><select value={x.status} onChange={e=>update('ticket',x.id,e.target.value)}><option value="open">{t.open}</option><option value="in_review">{t.review}</option><option value="resolved">{t.resolve}</option></select></article>):<EmptyText text={t.noTickets}/>}</section>}
+ {tab==='tickets'&&<section className="panel"><h3>{t.ticketManagement}</h3>{data.tickets.length?data.tickets.map(x=><article className="admin-row" key={x.id}><div><b>#{x.id} · {x.subject}</b><small>{x.username} · {new Date(x.created_at).toLocaleString()}{x.order_number?` · ${t.orderPrefix} ${x.order_number}`:''}</small><p>{x.message}</p><span className="tag">{statusLabel(t,x.status)}</span></div><select value={x.status} onChange={e=>update('ticket',x.id,e.target.value)}><option value="open">{t.open}</option><option value="in_review">{t.review}</option><option value="resolved">{t.resolve}</option></select></article>):<EmptyText text={t.noTickets}/>}</section>}
  </>}
 
 
@@ -958,8 +961,8 @@ function FinanceAccessAudit({t}){
 }
 function AdminOrders({rows,t}){
  const [query,setQuery]=useState(''),[status,setStatus]=useState('all');
- const filtered=useMemo(()=>{const q=query.trim().toLowerCase();return rows.filter(o=>{const matchStatus=status==='all'||o.status===status;const hay=`${o.id} ${o.customer||''} ${o.merchant||''} ${o.captain||''} ${o.status}`.toLowerCase();return matchStatus&&(!q||hay.includes(q))})},[rows,query,status]);
- return <><div className="table-toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={t.searchOrdersHint||t.searchOrders||'ابحث برقم الطلب أو الزبون أو المتجر'} aria-label={t.searchOrders||t.search}/></div><select value={status} onChange={e=>setStatus(e.target.value)} aria-label={t.status}><option value="all">{t.allOrders||'كل الطلبات'}</option>{ADMIN_STATUSES.map(s=><option key={s} value={s}>{statusLabel(t,s)}</option>)}</select></div>{filtered.length?<div className="admin-table-wrap"><table><thead><tr><th>#</th><th>{t.status}</th><th>{t.customerLabel}</th><th>{t.merchantLabel}</th><th>{t.captainLabel}</th><th>{t.amount}</th><th>{t.date}</th></tr></thead><tbody>{filtered.map(o=><tr key={o.id}><td>#{o.id}</td><td>{statusLabel(t,o.status)}</td><td>{o.customer}</td><td>{o.merchant}</td><td>{o.captain}</td><td>{money(o.total)}</td><td>{new Date(o.created_at).toLocaleString()}</td></tr>)}</tbody></table></div>:<EmptyText text={t.noMatchingOrders||t.noOrders}/>}</>}
+ const filtered=useMemo(()=>{const q=query.trim().toLowerCase();return rows.filter(o=>{const matchStatus=status==='all'||o.status===status;const hay=`${o.order_number||''} ${o.id} ${o.customer||''} ${o.merchant||''} ${o.captain||''} ${o.status}`.toLowerCase();return matchStatus&&(!q||hay.includes(q))})},[rows,query,status]);
+ return <><div className="table-toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={t.searchOrdersHint||t.searchOrders||'ابحث برقم الطلب أو الزبون أو المتجر'} aria-label={t.searchOrders||t.search}/></div><select value={status} onChange={e=>setStatus(e.target.value)} aria-label={t.status}><option value="all">{t.allOrders||'كل الطلبات'}</option>{ADMIN_STATUSES.map(s=><option key={s} value={s}>{statusLabel(t,s)}</option>)}</select></div>{filtered.length?<div className="admin-table-wrap"><table><thead><tr><th>{t.orderPrefix}</th><th>{t.status}</th><th>{t.customerLabel}</th><th>{t.merchantLabel}</th><th>{t.captainLabel}</th><th>{t.amount}</th><th>{t.date}</th></tr></thead><tbody>{filtered.map(o=><tr key={o.id}><td>{o.order_number}</td><td>{statusLabel(t,o.status)}</td><td>{o.customer}</td><td>{o.merchant}</td><td>{o.captain}</td><td>{money(o.total)}</td><td>{new Date(o.created_at).toLocaleString()}</td></tr>)}</tbody></table></div>:<EmptyText text={t.noMatchingOrders||t.noOrders}/>}</>}
 function EligibilityPanel({e,t}){
  const row=(label,value,ok)=><div className="elig-row"><small>{label}</small><span className={`tag ${ok?'ready':'bad'}`}>{value}</span></div>;
  const sub=e.subscription;
@@ -991,9 +994,9 @@ function Support({t}){
  return <><h3>{t.support}</h3><form className="panel form-stack" onSubmit={send}>
   <input placeholder={t.ticketTitle} value={f.subject} onChange={event=>setF({...f,subject:event.target.value})} required/>
   <textarea placeholder={t.ticketDetails} value={f.message} onChange={event=>setF({...f,message:event.target.value})} required/>
-  <label>{t.supportOrder}<select value={f.order} onChange={event=>setF({...f,order:event.target.value})}><option value="">{t.noOrderLinked}</option>{orders.map(order=><option key={order.id} value={order.id}>{t.orderPrefix} #{order.id} · {statusLabel(t,order.status)}</option>)}</select></label>
+  <label>{t.supportOrder}<select value={f.order} onChange={event=>setF({...f,order:event.target.value})}><option value="">{t.noOrderLinked}</option>{orders.map(order=><option key={order.id} value={order.id}>{t.orderPrefix} {order.order_number} · {statusLabel(t,order.status)}</option>)}</select></label>
   <button>{t.sendTicket}</button>
- </form>{data.map(ticket=><div className="ticket" key={ticket.id}><b>{ticket.subject}</b><p>{ticket.message}</p><small>{statusLabel(t,ticket.status)}{ticket.order?` · ${t.orderPrefix} #${ticket.order}`:''}</small></div>)}</>;
+ </form>{data.map(ticket=><div className="ticket" key={ticket.id}><b>{ticket.subject}</b><p>{ticket.message}</p><small>{statusLabel(t,ticket.status)}{ticket.order_number?` · ${t.orderPrefix} ${ticket.order_number}`:''}</small></div>)}</>;
 }
 function StatIcon({name}){
  const paths={

@@ -224,11 +224,15 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = "__all__"
         read_only_fields = [
-            "customer", "captain", "status", "accepted_at", "captain_accepted_at",
+            "order_number", "customer", "captain", "status", "accepted_at", "captain_accepted_at",
             "ready_at", "captain_delivered_at", "completed_at", "completed_by",
             "completed_by_name", "completion_method", "created_at", "updated_at", "total", "subtotal",
             "request_key",
         ]
+
+    def to_representation(self, instance):
+        instance.ensure_order_number()
+        return super().to_representation(instance)
 
     def get_my_ratings(self, obj):
         request = self.context.get("request")
@@ -321,35 +325,63 @@ class OrderSerializer(serializers.ModelSerializer):
         return attrs
 
 class SettlementSerializer(serializers.ModelSerializer):
+    order_number = serializers.SerializerMethodField()
+
     class Meta:
         model = CashSettlement
         fields = "__all__"
-        read_only_fields = ["reference", "closed", "closed_at"]
+        read_only_fields = ["reference", "closed", "closed_at", "order_number"]
+
+    def get_order_number(self, obj):
+        return obj.order.ensure_order_number()
+
 
 class DelayReportSerializer(serializers.ModelSerializer):
+    order_number = serializers.SerializerMethodField()
+
     class Meta:
         model = DelayReport
         fields = "__all__"
-        read_only_fields = ["captain", "reviewed", "reported_at"]
+        read_only_fields = ["captain", "reviewed", "reported_at", "order_number"]
+
+    def get_order_number(self, obj):
+        return obj.order.ensure_order_number()
+
 
 class SupportTicketSerializer(serializers.ModelSerializer):
+    order_number = serializers.SerializerMethodField()
+
     class Meta:
         model = SupportTicket
         fields = "__all__"
-        read_only_fields = ["user", "status", "created_at"]
+        read_only_fields = ["user", "status", "created_at", "order_number"]
+
+    def get_order_number(self, obj):
+        return obj.order.ensure_order_number() if obj.order_id else None
+
 
 class NotificationSerializer(serializers.ModelSerializer):
+    order_number = serializers.SerializerMethodField()
+
     class Meta:
         model = Notification
         fields = "__all__"
-        read_only_fields = ["user", "event", "order", "payload", "created_at"]
+        read_only_fields = ["user", "event", "order", "payload", "created_at", "order_number"]
+
+    def get_order_number(self, obj):
+        return obj.order.ensure_order_number() if obj.order_id else None
 
 
 class RatingSerializer(serializers.ModelSerializer):
+    order_number = serializers.SerializerMethodField()
+
     class Meta:
         model = Rating
-        fields = ["id", "order", "target_type", "score", "comment", "created_at"]
-        read_only_fields = ["id", "created_at"]
+        fields = ["id", "order", "order_number", "target_type", "score", "comment", "created_at"]
+        read_only_fields = ["id", "order_number", "created_at"]
+
+    def get_order_number(self, obj):
+        return obj.order.ensure_order_number()
 
     def validate_score(self, value):
         if value < 1 or value > 5:

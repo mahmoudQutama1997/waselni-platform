@@ -45,7 +45,10 @@ def publish_order_event(order, event="order.updated"):
     layer = get_channel_layer()
     if not layer:
         return
-    payload = {"type": event, "order_id": order.id, "status": order.status, "updated_at": order.updated_at.isoformat()}
+    payload = {
+        "type": event, "order_id": order.id, "order_number": order.order_number,
+        "status": order.status, "updated_at": order.updated_at.isoformat(),
+    }
     groups = {"role_admin"}
     if order.customer_id:
         groups.add(f"user_{order.customer_id}")
@@ -96,6 +99,7 @@ def publish_stock_events(before, after, reason, order=None):
             "stock_status": product.stock_status,
             "reason": reason,
             "order_id": order.id if order is not None else None,
+            "order_number": order.order_number if order is not None else None,
         }
         for group in {f"user_{merchant_user}", "role_admin"}:
             async_to_sync(layer.group_send)(group, {"type": "order_event", "payload": payload})
@@ -132,7 +136,10 @@ def notify_user_ids(user_ids, event, order=None, payload=None):
         row = Notification.objects.create(user_id=uid, event=event, order=order, payload=payload)
         created.append(row)
         if layer:
-            data = {"id": row.id, "event": row.event, "order": order_id, "payload": row.payload,
+            data = {
+                "id": row.id, "event": row.event, "order": order_id,
+                "order_number": order.order_number if order is not None else None,
+                "payload": row.payload,
                     "is_read": False, "created_at": row.created_at.isoformat()}
             async_to_sync(layer.group_send)(f"user_{uid}", {"type": "order_event",
                 "payload": {"type": "notification.created", "notification": data}})
@@ -968,12 +975,23 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         u = self.request.user
         if u.role == "admin":
-            return self.queryset
-        if u.role == "merchant":
-            return self.queryset.filter(merchant__user=u)
-        if u.role == "captain":
-            return self.queryset.filter(captain__user=u)
-        return self.queryset.filter(customer=u)
+            queryset = self.queryset
+        elif u.role == "merchant":
+            queryset = self.queryset.filter(merchant__user=u)
+        elif u.role == "captain":
+            queryset = self.queryset.filter(captain__user=u)
+        else:
+            queryset = self.queryset.filter(customer=u)
+        search = self.request.query_params.get("search", "").strip()
+        if self.action == "list" and search:
+            criteria = Q(order_number__icontains=search)
+            if u.role == "admin" or u.is_superuser:
+                try:
+                    criteria |= Q(pk=int(search))
+                except ValueError:
+                    pass
+            queryset = queryset.filter(criteria)
+        return queryset
 
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
@@ -1388,6 +1406,7 @@ class SettlementViewSet(viewsets.ModelViewSet):
             "notes": receipt.notes,
             "allocations": [{
                 "order_id": allocation.settlement.order_id,
+                "order_number": allocation.settlement.order.ensure_order_number(),
                 "amount": str(allocation.amount),
             } for allocation in receipt.allocations.select_related("settlement").all()],
         }
@@ -1414,6 +1433,7 @@ class SettlementViewSet(viewsets.ModelViewSet):
             rows.append({
                 "id": settlement.id,
                 "order_id": settlement.order_id,
+                "order_number": settlement.order.ensure_order_number(),
                 "captain_id": settlement.captain_id,
                 "captain_name": settlement.captain.user.get_full_name() or settlement.captain.user.username,
                 "merchant_name": settlement.merchant.shop_name,
@@ -1701,6 +1721,7 @@ class MerchantReportsView(APIView):
             settled = min(row.amount, max(allocated, row.amount if row.closed else Decimal("0.00")))
             settlement_rows.append({
                 "id": row.id, "reference": row.reference, "order_id": row.order_id,
+                "order_number": row.order.ensure_order_number(),
                 "captain_name": row.captain.user.get_full_name() or row.captain.user.username,
                 "amount": str(row.amount), "settled_amount": str(settled),
                 "outstanding_amount": str(row.amount - settled),
@@ -1791,7 +1812,7 @@ class AdminOperationsView(APIView):
             captains.append(captain_status_row(p, evaluate_captain(p.user, p)))
         merchants = [{"id": p.id, "user_id": p.user_id, "username": p.user.username, "shop_name": p.shop_name, "category": p.category, "address": p.address, "is_open": p.is_open} for p in MerchantProfile.objects.select_related("user").all()]
         orders = [{
-            "id": o.id, "status": o.status, "customer": o.customer.username,
+            "id": o.id, "order_number": o.ensure_order_number(), "status": o.status, "customer": o.customer.username,
             "merchant": o.merchant.shop_name if o.merchant else "—",
             "merchant_name": o.merchant.shop_name if o.merchant else "—",
             "captain": o.captain.user.username if o.captain else "—",
@@ -1806,7 +1827,12 @@ class AdminOperationsView(APIView):
             "captain_longitude": float(o.captain.current_longitude) if o.captain_id and o.captain.current_longitude is not None else None,
             "captain_location_updated_at": o.captain.current_location_updated_at.isoformat() if o.captain_id and o.captain.current_location_updated_at else None,
         } for o in Order.objects.select_related("customer", "merchant", "captain__user").order_by("-created_at")[:50]]
-        tickets = [{"id": x.id, "order_id": x.order_id, "subject": x.subject, "message": x.message, "status": x.status, "username": x.user.username, "created_at": x.created_at.isoformat()} for x in SupportTicket.objects.select_related("user").order_by("-created_at")[:50]]
+        tickets = [{
+            "id": x.id, "order_id": x.order_id,
+            "order_number": x.order.ensure_order_number() if x.order_id else None,
+            "subject": x.subject, "message": x.message, "status": x.status,
+            "username": x.user.username, "created_at": x.created_at.isoformat(),
+        } for x in SupportTicket.objects.select_related("user", "order").order_by("-created_at")[:50]]
         return Response({"captains": captains, "merchants": merchants, "orders": orders, "tickets": tickets})
     def patch(self, request):
         if request.user.role != "admin" and not request.user.is_superuser: return Response({"detail": "Admin only."}, status=403)

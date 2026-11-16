@@ -837,7 +837,7 @@ export default function CustomerStorefront({ lang }: Props) {
       setDropoffLat(null);
       setDropoffLng(null);
       setNotes('');
-      setNotice(`${t.success} #${result.id}`);
+      setNotice(`${t.success} #${result.order_number}`);
 
       const latest = await api('/orders/');
       setOrders(rows<Order>(latest).slice(0, 3));
@@ -1120,7 +1120,7 @@ export default function CustomerStorefront({ lang }: Props) {
                     <span className="customer-v2-order-icon">↗</span>
                     <div>
                       <b>
-                        #{order.id} · {order.merchant_name || 'WASELNI'}
+                        {order.order_number} · {order.merchant_name || 'WASELNI'}
                       </b>
                       <small>
                         {order.dropoff_address || t.orderStatus}

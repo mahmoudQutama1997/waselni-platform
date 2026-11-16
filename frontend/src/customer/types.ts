@@ -3,6 +3,7 @@ export type Product = { id: number; merchant: number; merchant_name?: string; na
 export type CartLine = { product: Product; quantity: number };
 export type Order = {
   id: number;
+  order_number: string;
   status: string;
   merchant_name?: string;
   total: string | number;

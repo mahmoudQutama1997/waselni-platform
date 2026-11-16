@@ -1,4 +1,7 @@
-from django.db import models
+import time
+
+from django.db import OperationalError, connection, models, transaction
+from django.db.models import F
 from django.contrib.auth.models import AbstractUser
 from django.conf import settings
 from django.utils import timezone
@@ -84,11 +87,18 @@ class Product(models.Model):
             return "low"
         return "in"
 
+
+class OrderNumberSequence(models.Model):
+    last_number = models.PositiveBigIntegerField(default=0)
+
+
 class Order(models.Model):
     TYPES = [("ride","Ride"),("parcel","Parcel"),("store","Store")]
     STATUSES = [(x,x.title()) for x in ["new","accepted","preparing","ready","assigned","picked_up","delivering","awaiting_confirmation","completed","cancelled"]]
     PAYMENT = [("cash","Cash"),("online","Online")]
     customer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="customer_orders")
+    # Nullable for rolling-deploy compatibility; application reads and writes backfill legacy nulls.
+    order_number = models.CharField(max_length=32, editable=False, blank=True, null=True)
     merchant = models.ForeignKey(MerchantProfile, on_delete=models.PROTECT, null=True, blank=True, related_name="orders")
     captain = models.ForeignKey(CaptainProfile, on_delete=models.PROTECT, null=True, blank=True, related_name="orders")
     order_type = models.CharField(max_length=20, choices=TYPES, default="store")
@@ -130,7 +140,80 @@ class Order(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["customer", "request_key"], name="uniq_order_customer_request_key"),
+            models.UniqueConstraint(fields=["order_number"], name="uniq_order_business_number"),
         ]
+
+    @classmethod
+    def _next_order_number(cls):
+        for attempt in range(20):
+            try:
+                return cls._allocate_order_number()
+            except OperationalError as exc:
+                if (
+                    connection.vendor != "sqlite"
+                    or "locked" not in str(exc).lower()
+                    or attempt == 19
+                ):
+                    raise
+                time.sleep(0.01 * (attempt + 1))
+
+    @classmethod
+    def _allocate_order_number(cls):
+        with transaction.atomic():
+            updated = OrderNumberSequence.objects.filter(pk=1).update(
+                last_number=F("last_number") + 1
+            )
+            if updated != 1:
+                highest_number = 0
+                numbers = cls.objects.exclude(order_number__isnull=True).values_list(
+                    "order_number", flat=True
+                )
+                for number in numbers.iterator(chunk_size=1000):
+                    try:
+                        suffix = int(number.rsplit("-", 1)[1])
+                    except (IndexError, ValueError) as exc:
+                        raise ValueError(f"Invalid persisted order number: {number}") from exc
+                    highest_number = max(highest_number, suffix)
+                OrderNumberSequence.objects.get_or_create(
+                    pk=1, defaults={"last_number": highest_number}
+                )
+                updated = OrderNumberSequence.objects.filter(pk=1).update(
+                    last_number=F("last_number") + 1
+                )
+            if updated != 1:
+                raise OrderNumberSequence.DoesNotExist("Order number counter could not be initialized.")
+            last_number = OrderNumberSequence.objects.values_list("last_number", flat=True).get(pk=1)
+            return f"WAS-{timezone.localdate().year}-{last_number:06d}"
+
+    def save(self, *args, **kwargs):
+        if self._state.adding:
+            self.order_number = self._next_order_number()
+        elif self.pk:
+            persisted_number = type(self).objects.filter(pk=self.pk).values_list(
+                "order_number", flat=True
+            ).first()
+            if persisted_number is None:
+                self.order_number = self._next_order_number()
+                if kwargs.get("update_fields") is not None:
+                    kwargs["update_fields"] = set(kwargs["update_fields"]) | {"order_number"}
+            else:
+                self.order_number = persisted_number
+        super().save(*args, **kwargs)
+
+    def ensure_order_number(self):
+        if self.order_number or not self.pk:
+            return self.order_number
+        generated = self._next_order_number()
+        updated = type(self).objects.filter(pk=self.pk, order_number__isnull=True).update(
+            order_number=generated
+        )
+        if updated:
+            self.order_number = generated
+        else:
+            self.order_number = type(self).objects.filter(pk=self.pk).values_list(
+                "order_number", flat=True
+            ).first()
+        return self.order_number
 
 
 class OrderActivity(models.Model):

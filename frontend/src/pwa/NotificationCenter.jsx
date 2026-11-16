@@ -94,7 +94,7 @@ const STATUS_LABELS = {
 function describe(notification, lang, role) {
   const copy = COPY[lang] || COPY.ar
   const statusLabels = STATUS_LABELS[lang] || STATUS_LABELS.ar
-  const orderId = notification.order
+  const orderId = notification.order_number || payload.order_number || ''
   const payload = notification.payload || {}
   switch (notification.event) {
     case 'order.created': {
