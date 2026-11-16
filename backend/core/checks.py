@@ -42,3 +42,42 @@ def imagekit_configuration(app_configs, **kwargs):
             id="waselni.W002",
         )
     ]
+
+
+@register()
+def redis_configuration(app_configs, **kwargs):
+    if settings.DEBUG or getattr(settings, "REDIS_URL", "").strip():
+        return []
+
+    return [
+        Warning(
+            "Redis is not configured in production; shared throttling and "
+            "cross-worker WebSocket delivery are unavailable.",
+            hint="Set REDIS_URL or REDIS_HOST and REDIS_PORT in the hosting environment.",
+            id="waselni.W004",
+        )
+    ]
+
+
+@register()
+def password_reset_email_configuration(app_configs, **kwargs):
+    if settings.DEBUG:
+        return []
+
+    if (
+        settings.EMAIL_HOST
+        and settings.DEFAULT_FROM_EMAIL
+        and settings.EMAIL_BACKEND != "django.core.mail.backends.console.EmailBackend"
+    ):
+        return []
+
+    return [
+        Warning(
+            "Password recovery email is not configured; account recovery will return HTTP 503.",
+            hint=(
+                "Configure a production email backend, EMAIL_HOST, "
+                "DEFAULT_FROM_EMAIL, and the required SMTP credentials."
+            ),
+            id="waselni.W003",
+        )
+    ]

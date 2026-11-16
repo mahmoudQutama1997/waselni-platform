@@ -5,8 +5,13 @@ from django.http import HttpResponseNotFound
 from django.urls import path, include, re_path
 from django.conf import settings
 from django.views.static import serve
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenRefreshView
 from core.views import RegisterView, MeView, HealthView, CaptainDocumentView, MapConfigView
+from core.auth_views import (
+    TokenLoginView,
+    PasswordResetRequestView,
+    PasswordResetConfirmView,
+)
 
 CAPTAIN_DOCUMENTS_PREFIX = "captain_documents"
 
@@ -63,8 +68,10 @@ def serve_media(request, path):
 urlpatterns = [
     path("api/health/", HealthView.as_view()),
     path("api/auth/register/", RegisterView.as_view()),
-    path("api/auth/token/", TokenObtainPairView.as_view()),
+    path("api/auth/token/", TokenLoginView.as_view()),
     path("api/auth/token/refresh/", TokenRefreshView.as_view()),
+    path("api/auth/password-reset/", PasswordResetRequestView.as_view()),
+    path("api/auth/password-reset/confirm/", PasswordResetConfirmView.as_view()),
     path("api/me/", MeView.as_view()),
     path("api/map/config/", MapConfigView.as_view()),
     path("api/captain-documents/<int:profile_id>/<str:field>/", CaptainDocumentView.as_view()),

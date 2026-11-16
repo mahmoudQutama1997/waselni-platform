@@ -311,12 +311,16 @@ class CaptainApiConsistencyTests(TestCase):
         self.profile.save()
         self.as_admin()
         # Using the *user id* in the URL must not approve this captain.
-        wrong = self.client.post(f"/api/admin/captains/{self.user.id}/approval/", {"status": "approved"}, format="json")
+        wrong = self.client.post(f"/api/admin/captains/{self.user.id}/approval/", {
+            "status": "approved", "reason": "Testing profile identifier",
+        }, format="json")
         self.assertIn(wrong.status_code, (404, 200))
         self.profile.refresh_from_db()
         if self.user.id != self.profile.id:
             self.assertFalse(self.profile.approved)
-        ok = self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {"status": "approved"}, format="json")
+        ok = self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {
+            "status": "approved", "reason": "Documents verified",
+        }, format="json")
         self.assertEqual(ok.status_code, 200, ok.data)
         self.assertEqual(ok.data["captain_profile_id"], self.profile.id)
         self.assertEqual(ok.data["user_id"], self.user.id)
@@ -328,7 +332,9 @@ class CaptainApiConsistencyTests(TestCase):
         self.profile.online = True
         self.profile.save()
         self.as_admin()
-        r = self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {"status": "rejected"}, format="json")
+        r = self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {
+            "status": "rejected", "reason": "Required documents are missing",
+        }, format="json")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data["eligibility"]["approval"]["status"], "rejected")
         self.assertFalse(r.data["online"])
@@ -338,7 +344,9 @@ class CaptainApiConsistencyTests(TestCase):
 
     def test_approval_endpoint_permissions_and_validation(self):
         self.as_captain()
-        self.assertEqual(self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {"status": "approved"}, format="json").status_code, 403)
+        self.assertEqual(self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {
+            "status": "approved", "reason": "Not authorized",
+        }, format="json").status_code, 403)
         self.as_admin()
         self.assertEqual(self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {"status": "bogus"}, format="json").status_code, 400)
         self.assertEqual(self.client.post("/api/admin/captains/99999/approval/", {"status": "approved"}, format="json").status_code, 404)
@@ -402,10 +410,14 @@ class CaptainApiConsistencyTests(TestCase):
         self.profile.online = True
         self.profile.save()
         self.as_admin()
-        self.assertEqual(self.client.patch(f"/api/admin/users/{self.user.id}/", {"is_active": False}, format="json").status_code, 200)
+        self.assertEqual(self.client.patch(f"/api/admin/users/{self.user.id}/", {
+            "is_active": False, "reason": "Account review",
+        }, format="json").status_code, 200)
         self.profile.refresh_from_db()
         self.assertFalse(self.profile.online)
-        self.client.patch(f"/api/admin/users/{self.user.id}/", {"is_active": True}, format="json")
+        self.client.patch(f"/api/admin/users/{self.user.id}/", {
+            "is_active": True, "reason": "Review completed",
+        }, format="json")
         self.profile.online = True
         self.profile.save()
         sub = Subscription.objects.get(user=self.user)

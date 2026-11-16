@@ -2,7 +2,7 @@ from django.core.checks import Warning
 from django.core.checks.registry import registry
 from django.test import SimpleTestCase, override_settings
 
-from .checks import imagekit_configuration
+from .checks import imagekit_configuration, redis_configuration
 
 
 @override_settings(DEBUG=False)
@@ -43,3 +43,23 @@ class ImageKitStorageCheckTests(SimpleTestCase):
     )
     def test_configured_imagekit_is_silent(self):
         self.assertEqual(imagekit_configuration(None), [])
+
+
+class RedisConfigurationCheckTests(SimpleTestCase):
+    def test_check_is_registered(self):
+        self.assertIn(redis_configuration, registry.get_checks())
+
+    @override_settings(DEBUG=True, REDIS_URL="")
+    def test_development_without_redis_is_allowed(self):
+        self.assertEqual(redis_configuration(None), [])
+
+    @override_settings(DEBUG=False, REDIS_URL="")
+    def test_production_without_redis_warns(self):
+        warnings = redis_configuration(None)
+        self.assertEqual([warning.id for warning in warnings], ["waselni.W004"])
+        self.assertIsInstance(warnings[0], Warning)
+        self.assertNotIn("REDIS_URL=", warnings[0].msg)
+
+    @override_settings(DEBUG=False, REDIS_URL="redis://redis.example.test:6379")
+    def test_production_with_redis_is_silent(self):
+        self.assertEqual(redis_configuration(None), [])

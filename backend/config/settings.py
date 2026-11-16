@@ -80,6 +80,12 @@ if not REDIS_URL:
         REDIS_URL = f"redis://{REDIS_HOST}:{os.getenv('REDIS_PORT', '6379').strip() or '6379'}"
 
 if REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+        }
+    }
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
@@ -87,6 +93,12 @@ if REDIS_URL:
         }
     }
 else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "waselni-local-cache",
+        }
+    }
     # In-memory channels only reach clients connected to this single process.
     # Set REDIS_URL in production so WebSocket events cross workers/instances.
     CHANNEL_LAYERS = {
@@ -127,6 +139,25 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Asia/Hebron"
 USE_I18N = True
 USE_TZ = True
+
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend" if DEBUG
+    else "django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "").strip()
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "").strip()
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() == "true"
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL", "webmaster@localhost" if DEBUG else ""
+).strip()
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+PASSWORD_RESET_FRONTEND_URL = os.getenv(
+    "PASSWORD_RESET_FRONTEND_URL",
+    "https://waselni-customer1.vercel.app",
+).strip().rstrip("/")
 
 STATIC_URL = "static/"
 MEDIA_URL = "/media/"
@@ -189,11 +220,16 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticatedOrReadOnly",
     ),
     "EXCEPTION_HANDLER": "core.exceptions.api_exception_handler",
+    "DEFAULT_THROTTLE_RATES": {
+        "login": "5/min",
+        "password_reset": "5/hour",
+    },
 }
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=8),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "CHECK_REVOKE_TOKEN": True,
 }
 
 # HTTPS protections default on for production and remain off for local development.

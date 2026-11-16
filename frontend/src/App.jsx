@@ -91,15 +91,19 @@ function App(){
  const [lang,setLang]=useState(localStorage.getItem('waselni_lang')||'ar')
  const [me,setMe]=useState(null),[error,setError]=useState(''),[passwordError,setPasswordError]=useState(''),[registering,setRegistering]=useState(false),[registerError,setRegisterError]=useState(''),[registerNotice,setRegisterNotice]=useState('')
  const t=dict[lang],rtl=lang!=='en'
+ const passwordResetLink=useMemo(()=>{const prefix='#password-reset?';if(!window.location.hash.startsWith(prefix))return null;const params=new URLSearchParams(window.location.hash.slice(prefix.length));return {uid:params.get('uid'),token:params.get('token')}},[])
+ const [recoveryMode,setRecoveryMode]=useState(()=>passwordResetLink?.uid&&passwordResetLink?.token?'confirm':null),[recoveryError,setRecoveryError]=useState(''),[recoveryNotice,setRecoveryNotice]=useState('')
  const appRoleLabel=t[({customer:'appRoleCustomer',captain:'appRoleCaptain',merchant:'appRoleMerchant',admin:'appRoleAdmin',all:'appRoleAll'})[APP_ROLE]]||APP_ROLE_LABEL[APP_ROLE]||APP_ROLE
  useOrderAlerts(me?.role,t,lang)
  useEffect(()=>{document.documentElement.lang=lang;document.documentElement.dir=rtl?'rtl':'ltr';localStorage.setItem('waselni_lang',lang)},[lang])
- useEffect(()=>{if(token())api('/me/').then(user=>{if(APP_ROLE!=='all'&&user.role!==APP_ROLE){clearStadiaKey();clearAuth();setError(`هذا الحساب لا يملك صلاحية الدخول إلى ${APP_ROLE_LABEL[APP_ROLE]||APP_ROLE}.`);return}setMe(user)}).catch(()=>{clearStadiaKey();clearAuth()})},[])
+ useEffect(()=>{if(passwordResetLink?.uid&&passwordResetLink?.token){clearStadiaKey();clearAuth();window.history.replaceState(null,'',window.location.pathname+window.location.search);return}if(token())api('/me/').then(user=>{if(APP_ROLE!=='all'&&user.role!==APP_ROLE){clearStadiaKey();clearAuth();setError(`هذا الحساب لا يملك صلاحية الدخول إلى ${APP_ROLE_LABEL[APP_ROLE]||APP_ROLE}.`);return}setMe(user)}).catch(()=>{clearStadiaKey();clearAuth()})},[])
  useEffect(()=>{setStadiaRole(me?.role||null)},[me])
  const location=useLocation()
  const online=useOnline()
  async function signIn(e){e.preventDefault();setError('');const fd=new FormData(e.currentTarget);try{await login(fd.get('username'),fd.get('password'));const user=await api('/me/');if(APP_ROLE!=='all'&&user.role!==APP_ROLE){clearStadiaKey();clearAuth();throw new Error(`${t.roleMismatch||'هذا الحساب لا يملك صلاحية الدخول إلى'} ${appRoleLabel}.`)}setMe(user)}catch(x){setError(x.message)}}
  async function signUp(e){e.preventDefault();setRegisterError('');setRegisterNotice('');const fd=new FormData(e.currentTarget);fd.set('role','customer');try{const result=await api('/auth/register/',{method:'POST',body:fd});setRegisterNotice(`${result.message} Username: ${result.username}`);setRegistering(false)}catch(x){setRegisterError(x.message)}}
+ async function requestPasswordReset(e){e.preventDefault();setRecoveryError('');setRecoveryNotice('');const fd=new FormData(e.currentTarget);try{const result=await api('/auth/password-reset/',{method:'POST',body:JSON.stringify({email:fd.get('email')})});setRecoveryNotice(result.detail)}catch(x){setRecoveryError(x.message)}}
+ async function confirmPasswordReset(e){e.preventDefault();setRecoveryError('');setRecoveryNotice('');if(!passwordResetLink?.uid||!passwordResetLink?.token){setRecoveryError(t.passwordResetInvalid);return}const fd=new FormData(e.currentTarget);try{await api('/auth/password-reset/confirm/',{method:'POST',body:JSON.stringify({uid:passwordResetLink.uid,token:passwordResetLink.token,new_password:fd.get('new_password'),confirm_password:fd.get('confirm_password')})});clearAuth();window.history.replaceState(null,'',window.location.pathname+window.location.search);setRecoveryMode(null);setRecoveryNotice(t.passwordResetComplete)}catch(x){setRecoveryError(x.message)}}
  function signOut(){clearStadiaKey();clearAuth();setMe(null)}
  async function changeInitialPassword(e){e.preventDefault();setPasswordError('');const fd=new FormData(e.currentTarget);try{await api('/account/change-password/',{method:'POST',body:JSON.stringify({current_password:fd.get('current_password'),new_password:fd.get('new_password')})});setMe(await api('/me/'))}catch(x){setPasswordError(x.message)}}
  if(!me)return <>
@@ -113,12 +117,20 @@ function App(){
     <select value={lang} onChange={e=>setLang(e.target.value)}>
      <option value="ar">العربية</option><option value="he">עברית</option><option value="en">English</option>
     </select>
-    {!registering?<>
+    {recoveryMode==='request'?<>
+     <h3>{t.passwordResetTitle}</h3><p>{t.passwordResetHint}</p>
+     <form onSubmit={requestPasswordReset}><label>{t.email}</label><input name="email" type="email" required autoComplete="email"/><button>{t.passwordResetSend}</button>{recoveryError&&<p className="error">{recoveryError}</p>}{recoveryNotice&&<p className="success-note">{recoveryNotice}</p>}</form>
+     <button type="button" className="secondary auth-switch" onClick={()=>{setRecoveryMode(null);setRecoveryError('');setRecoveryNotice('')}}>{t.backToLogin}</button>
+    </>:recoveryMode==='confirm'?<>
+     <h3>{t.passwordResetNewTitle}</h3><p>{t.passwordResetNewHint}</p>
+     <form onSubmit={confirmPasswordReset}><label>{t.newPassword}</label><input name="new_password" type="password" minLength="8" required autoComplete="new-password"/><label>{t.confirmPassword}</label><input name="confirm_password" type="password" minLength="8" required autoComplete="new-password"/><button>{t.passwordResetSave}</button>{recoveryError&&<p className="error">{recoveryError}</p>}</form>
+    </>:!registering?<>
      <form onSubmit={signIn}>
       <label>{t.username}</label><input name="username" required/>
       <label>{t.password}</label><input name="password" type="password" required/>
       <button>{t.enter}</button>{error&&<p className="error">{error}</p>}
      </form>
+     <button type="button" className="secondary auth-switch" onClick={()=>{setRecoveryMode('request');setRecoveryError('');setRecoveryNotice('');setError('')}}>{t.forgotPassword}</button>
      {(APP_ROLE==='customer'||APP_ROLE==='all')&&<button type="button" className="secondary auth-switch" onClick={()=>{setRegistering(true);setError('');setRegisterNotice('')}}>{t.createCustomerAccount}</button>}
     </>:<>
      <h3>{t.registerTitle}</h3>
@@ -150,7 +162,7 @@ function App(){
      </form>
      {(APP_ROLE==='customer'||APP_ROLE==='all')&&<button type="button" className="secondary auth-switch" onClick={()=>setRegistering(false)}>{t.backToLogin}</button>}
     </>}
-    {registerNotice&&<p className="success-note">{registerNotice}</p>}<small>{t.rolesFooter}</small>
+    {registerNotice&&<p className="success-note">{registerNotice}</p>}{recoveryNotice&&recoveryMode===null&&<p className="success-note">{recoveryNotice}</p>}<small>{t.rolesFooter}</small>
    </section>
   </main>
  </>
@@ -859,7 +871,7 @@ function Admin({t}){
  {summary&&<div className="stats"><Stat icon="orders" label={t.todayOrders} value={summary.orders_today}/><Stat icon="active" label={t.active} value={summary.active_orders}/><Stat icon="completed" label={t.completedToday} value={summary.completed_today}/><Stat icon="captains" label={t.captains} value={summary.online_captains}/><Stat icon="merchants" label={t.merchants} value={summary.open_merchants}/><Stat icon="sales" label={t.sales} value={money(summary.sales_today)}/><Stat icon="tickets" label={t.openTickets} value={summary.open_tickets}/></div>}
  <div className="admin-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?'primary':'secondary'} onClick={()=>setTab(id)}>{label}</button>)}</div>
  {tab==='overview'&&<><div className="dashboard-split"><section className="panel"><OrdersChart rows={data.orders} t={t}/></section><section className="panel"><StatusBreakdown rows={data.orders} t={t}/></section></div><section className="panel admin-map"><h3>{t.mapTitle}</h3><p>{t.mapNote}</p><AdminOverviewMap stores={data.stores} orders={data.orders}/></section><section className="panel"><h3>{t.ordersSection}</h3><AdminOrders rows={data.orders.slice(0,8)} t={t}/></section></>}
- {tab==='users'&&<><AdminUsers t={t}/><FinanceAccessAudit t={t}/></>}{tab==='subscriptions'&&<SubscriptionManagement rows={data.subscriptions} t={t} reload={load}/>}
+ {tab==='users'&&<><AdminUsers t={t}/><AccountChangeAudit t={t}/><FinanceAccessAudit t={t}/></>}{tab==='subscriptions'&&<SubscriptionManagement rows={data.subscriptions} t={t} reload={load}/>}
  {tab==='captains'&&<CaptainManagement t={t} captains={data.captains} busy={busy} update={update} reload={load}/>}
  {tab==='merchants'&&<section className="panel"><h3>{t.merchantManagement}</h3>{data.stores.length?data.stores.map(m=><article className="admin-row admin-store-row" key={m.id}><div className="admin-store-head"><SafeImage src={m.image} alt={m.shop_name||''}/><div><b>{m.shop_name}</b><small>{t.owner}: {m.owner_name} · {m.username}</small><small>{m.category} · {m.address||'—'}</small><small>{t.productsCountLabel}: {m.product_count} · {new Date(m.created_at).toLocaleDateString()}</small><span className={`tag ${m.is_open?'ready':'new'}`}>{m.is_open?t.openStore:t.storeInactive}</span></div><button className="secondary" disabled={busy===`store-${m.id}`} onClick={async()=>{setBusy(`store-${m.id}`);try{await api(`/admin/stores/${m.id}/`,{method:'PATCH',body:JSON.stringify({is_open:!m.is_open})});await load()}catch(e){setErr(e.message)}finally{setBusy('')}}}>{m.is_open?t.deactivateStore:t.activateStore}</button></div>{m.cover_image&&<SafeImage className="admin-store-cover" src={m.cover_image} alt={m.shop_name||''}/>}<div className="admin-store-products">{m.products.map(p=><div key={p.id}><SafeImage src={p.image} alt={p.name||''}/><span><b>{p.name}</b><small>{money(p.price)} · {p.available?t.availableShort:t.unavailableShort}</small></span></div>)}</div></article>):<EmptyText text={t.noMerchants}/>}</section>}
  {tab==='orders'&&<section className="panel"><h3>{t.orderManagement}</h3><AdminOrders rows={data.orders} t={t}/></section>}
@@ -877,7 +889,7 @@ function SubscriptionManagement({rows,t,reload}){
 
 function CaptainManagement({t,captains,busy,update,reload}){
  const [approvalBusy,setApprovalBusy]=useState(''),[approvalError,setApprovalError]=useState('');
- async function setApproval(c,status){const key=`approval-${c.captain_profile_id}`;setApprovalBusy(key);setApprovalError('');try{await api(`/admin/captains/${c.captain_profile_id}/approval/`,{method:'POST',body:JSON.stringify({status})});await reload()}catch(err){setApprovalError(err.message)}finally{setApprovalBusy('')}}
+ async function setApproval(c,status){const reason=window.prompt(t.auditReasonPrompt);if(reason===null)return;if(!reason.trim()){setApprovalError(t.auditReasonRequired);return}const key=`approval-${c.captain_profile_id}`;setApprovalBusy(key);setApprovalError('');try{await api(`/admin/captains/${c.captain_profile_id}/approval/`,{method:'POST',body:JSON.stringify({status,reason:reason.trim()})});await reload()}catch(err){setApprovalError(err.message)}finally{setApprovalBusy('')}}
  const [form,setForm]=useState({identity_number:'',first_name:'',last_name:'',phone:'',password:'',vehicle_type:'motorcycle',vehicle_model:'',plate_number:'',permit_type:'west_bank',subscription_required:true});
  const [saving,setSaving]=useState(false),[error,setError]=useState(''),[created,setCreated]=useState(null);
  function field(k,v){setForm(f=>({...f,[k]:v}))}
@@ -911,7 +923,7 @@ function AdminUsers({t}){
  async function create(e){e.preventDefault();setError('');setNotice('');setCreated(null);setBusy('create');try{const r=await api('/admin/users/',{method:'POST',body:JSON.stringify(form)});setCreated(r);setNotice(t.accountCreated);setForm({identity_number:'',first_name:'',last_name:'',phone:'',role:'customer',shop_name:'',subscription_required:false});await load()}catch(e){setError(e.message)}finally{setBusy('')}}
  async function savePlan(user){const f=plans[user.id]||{};setBusy(`plan-${user.id}`);setError('');try{await api(`/admin/users/${user.id}/subscription/`,{method:'POST',body:JSON.stringify({amount:f.amount,starts_on:f.starts_on||new Date().toISOString().slice(0,10),months:Number(f.months||1),status:'active',notes:f.notes||''})});setNotice(t.subscriptionSaved);await load()}catch(e){setError(e.message)}finally{setBusy('')}}
  async function recordPayment(user){const amount=payments[user.id];if(!user.subscription||!amount)return;setBusy(`payment-${user.id}`);setError('');try{await api(`/admin/subscriptions/${user.subscription.id}/payments/`,{method:'POST',body:JSON.stringify({amount,method:'cash'})});setNotice(t.paymentRecorded);setPayments(p=>({...p,[user.id]:''}));await load()}catch(e){setError(e.message)}finally{setBusy('')}}
- async function toggleUser(user){setBusy(`user-${user.id}`);try{await api(`/admin/users/${user.id}/`,{method:'PATCH',body:JSON.stringify({is_active:!user.is_active})});await load()}catch(e){setError(e.message)}finally{setBusy('')}}
+ async function toggleUser(user){const reason=window.prompt(t.auditReasonPrompt);if(reason===null)return;if(!reason.trim()){setError(t.auditReasonRequired);return}setBusy(`user-${user.id}`);try{await api(`/admin/users/${user.id}/`,{method:'PATCH',body:JSON.stringify({is_active:!user.is_active,reason:reason.trim()})});await load()}catch(e){setError(e.message)}finally{setBusy('')}}
  async function toggleRequired(user){setBusy(`req-${user.id}`);try{await api(`/admin/users/${user.id}/`,{method:'PATCH',body:JSON.stringify({subscription_required:!user.subscription_required})});await load()}catch(e){setError(e.message)}finally{setBusy('')}}
  async function toggleStaff(user){setBusy(`staff-${user.id}`);try{await api(`/admin/users/${user.id}/`,{method:'PATCH',body:JSON.stringify({is_finance_staff:!user.is_finance_staff})});await load()}catch(e){setError(e.message)}finally{setBusy('')}}
  return <div className="users-admin"><section className="panel"><h3>{t.createAccount}</h3><p className="note">{t.adminCreatesAccountsNote}</p><form className="user-create-form" onSubmit={create}>
@@ -933,6 +945,11 @@ function AdminUsers({t}){
  <div className="subscription-form"><b>{t.setMonthlySubscription}</b><div className="subscription-fields"><label>{t.monthlyAmount}<input type="number" min="0" step="0.01" value={plans[u.id]?.amount??''} onChange={e=>setPlans(p=>({...p,[u.id]:{...p[u.id],amount:e.target.value}}))} placeholder="0.00"/></label><label>{t.startDate}<input type="date" value={plans[u.id]?.starts_on??new Date().toISOString().slice(0,10)} onChange={e=>setPlans(p=>({...p,[u.id]:{...p[u.id],starts_on:e.target.value}}))}/></label><label>{t.durationMonths}<select value={plans[u.id]?.months??1} onChange={e=>setPlans(p=>({...p,[u.id]:{...p[u.id],months:e.target.value}}))}>{[1,2,3,6,12].map(n=><option key={n} value={n}>{n}</option>)}</select></label><button disabled={busy===`plan-${u.id}`||!plans[u.id]?.amount} onClick={()=>savePlan(u)}>{t.saveSubscription}</button></div>{u.subscription&&<div className="payment-row"><small>{t.paidSoFar}: {u.subscription.paid_total} ₪ / {u.subscription.total_due} ₪</small><input type="number" min="0.01" step="0.01" placeholder={t.paymentAmount} value={payments[u.id]??''} onChange={e=>setPayments(p=>({...p,[u.id]:e.target.value}))}/><button className="secondary" disabled={busy===`payment-${u.id}`||!payments[u.id]} onClick={()=>recordPayment(u)}>{t.recordPayment}</button></div>}</div>
  </article>):<EmptyText text={t.noUsers}/>}
  </section></div>
+}
+function AccountChangeAudit({t}){
+ const [rows,setRows]=useState([]),[error,setError]=useState('');
+ useEffect(()=>{api('/admin/account-audit/').then(setRows).catch(e=>setError(e.message))},[]);
+ return <section className="panel"><div className="section-head"><div><h3>{t.accountChangeAudit}</h3><p>{t.accountChangeAuditHint}</p></div></div>{error&&<p className="error">{error}</p>}{rows.length?<div className="table-wrap"><table><thead><tr><th>{t.accountAuditTarget}</th><th>{t.status}</th><th>{t.auditReason}</th><th>{t.recordedBy}</th><th>{t.date}</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><td>{row.target}</td><td>{row.action==='captain_approval'?t.captainApprovalAudit:t.accountStatusAudit}: {t[row.previous_value]||row.previous_value} → {t[row.new_value]||row.new_value}</td><td>{row.reason}</td><td>{row.changed_by}</td><td>{new Date(row.created_at).toLocaleString()}</td></tr>)}</tbody></table></div>:!error&&<EmptyText text={t.noAccountChanges}/>}</section>
 }
 function FinanceAccessAudit({t}){
  const [rows,setRows]=useState([]),[error,setError]=useState('');

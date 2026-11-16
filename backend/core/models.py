@@ -203,6 +203,32 @@ class FinanceAccessAudit(models.Model):
         ordering = ["-created_at", "-id"]
 
 
+class AdminAccountAudit(models.Model):
+    ACTION_CHOICES = [
+        ("account_status", "Account status"),
+        ("captain_approval", "Captain approval"),
+    ]
+
+    target = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="admin_account_changes",
+    )
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="admin_account_audits",
+    )
+    action = models.CharField(max_length=32, choices=ACTION_CHOICES)
+    previous_value = models.CharField(max_length=32)
+    new_value = models.CharField(max_length=32)
+    reason = models.CharField(max_length=1000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+
 class DelayReport(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="delay_reports")
     captain = models.ForeignKey(CaptainProfile, on_delete=models.PROTECT)

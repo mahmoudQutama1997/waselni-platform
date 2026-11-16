@@ -25,6 +25,7 @@ from .serializers import *
 from .services.eligibility import (
     subscription_state, classify_subscription, evaluate_captain, legacy_fields, enforce_online_invariant,
     eligible_captain_user_ids, order_compatibility_reasons, set_approval, APPROVAL_STATUSES,
+    approval_status,
 )
 from .validators import validate_document_upload, validate_image_upload
 from .services.order_completion import complete_order
@@ -698,7 +699,22 @@ class AdminUserDetailView(APIView):
             with transaction.atomic():
                 user = User.objects.select_for_update().get(pk=user_id)
                 if "is_active" in request.data:
-                    user.is_active = as_bool(request.data["is_active"])
+                    new_active = as_bool(request.data["is_active"])
+                    if user.is_active != new_active:
+                        reason = str(request.data.get("reason", "")).strip()
+                        if not reason:
+                            raise ValidationError({"reason": "A reason is required when changing account status."})
+                        if len(reason) > 1000:
+                            raise ValidationError({"reason": "The reason must be 1000 characters or fewer."})
+                        AdminAccountAudit.objects.create(
+                            target=user,
+                            changed_by=request.user,
+                            action="account_status",
+                            previous_value="active" if user.is_active else "disabled",
+                            new_value="active" if new_active else "disabled",
+                            reason=reason,
+                        )
+                    user.is_active = new_active
                 if "is_finance_staff" in request.data:
                     granted = as_bool(request.data["is_finance_staff"])
                     if user.is_finance_staff != granted:
@@ -732,6 +748,25 @@ class FinanceAccessAuditView(APIView):
             "user": row.user.get_full_name() or row.user.username,
             "changed_by": row.changed_by.get_full_name() or row.changed_by.username,
             "granted": row.granted,
+            "created_at": row.created_at.isoformat(),
+        } for row in rows])
+
+
+class AdminAccountAuditView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != "admin" and not request.user.is_superuser:
+            raise PermissionDenied("Only the platform administrator can view account change history.")
+        rows = AdminAccountAudit.objects.select_related("target", "changed_by")[:200]
+        return Response([{
+            "id": row.id,
+            "target": row.target.get_full_name() or row.target.username,
+            "changed_by": row.changed_by.get_full_name() or row.changed_by.username,
+            "action": row.action,
+            "previous_value": row.previous_value,
+            "new_value": row.new_value,
+            "reason": row.reason,
             "created_at": row.created_at.isoformat(),
         } for row in rows])
 
@@ -1801,14 +1836,29 @@ class AdminCaptainApprovalView(APIView):
         if status not in APPROVAL_STATUSES:
             raise ValidationError({"status": "Choose approved, rejected or pending."})
         try:
-            profile = CaptainProfile.objects.select_related("user").get(pk=captain_profile_id)
+            with transaction.atomic():
+                profile = CaptainProfile.objects.select_for_update().select_related("user").get(pk=captain_profile_id)
+                previous_status = approval_status(profile)
+                if previous_status != status:
+                    reason = str(request.data.get("reason", "")).strip()
+                    if not reason:
+                        raise ValidationError({"reason": "A reason is required when changing captain approval."})
+                    if len(reason) > 1000:
+                        raise ValidationError({"reason": "The reason must be 1000 characters or fewer."})
+                    set_approval(profile, status)
+                    AdminAccountAudit.objects.create(
+                        target=profile.user,
+                        changed_by=request.user,
+                        action="captain_approval",
+                        previous_value=previous_status,
+                        new_value=status,
+                        reason=reason,
+                    )
+                if "checkpoint_badge" in request.data:
+                    profile.checkpoint_badge = as_bool(request.data["checkpoint_badge"])
+                    profile.save(update_fields=["checkpoint_badge"])
         except CaptainProfile.DoesNotExist:
             return Response({"detail": "Captain profile not found."}, status=404)
-        with transaction.atomic():
-            set_approval(profile, status)
-            if "checkpoint_badge" in request.data:
-                profile.checkpoint_badge = as_bool(request.data["checkpoint_badge"])
-                profile.save(update_fields=["checkpoint_badge"])
         publish_captain_eligibility(profile.user)
         profile.refresh_from_db()
         return Response({"ok": True, **captain_status_row(profile, evaluate_captain(profile.user, profile))})

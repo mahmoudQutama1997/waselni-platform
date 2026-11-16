@@ -95,6 +95,8 @@ Important: run `python manage.py createsuperuser` once to create the initial pla
 - `POST /api/admin/subscriptions/{id}/payments/` — record a manual subscription payment (admin only)
 - `POST /api/account/change-password/` — mandatory first-login password change
 - `POST /api/auth/token/` — obtain JWT tokens
+- `POST /api/auth/password-reset/` — request a generic password reset email response
+- `POST /api/auth/password-reset/confirm/` — set a new password with the one-time email token
 - `GET /api/me/` — current account
 - `GET /api/merchants/` — open merchants
 - `GET/POST /api/products/` — browse products / merchant catalog management
@@ -143,6 +145,8 @@ The admin operations map renders live store, active-order and captain positions 
 Public self-registration is disabled. The platform administrator creates customer, merchant and captain accounts from **Admin → Users** in the Waselni web app. The identity number is used as the login username and must be unique. Merchant creation also requires a store name; captain profiles are created automatically but remain unapproved until reviewed. A temporary password is generated if the administrator does not provide one. Share it securely; SMS/OTP delivery is not configured in this MVP.
 
 The admin can set a separate monthly subscription amount for each account, choose its start date and duration, and record payments. Each renewal is a separate historical subscription record. Merchant and captain accounts require an active subscription by default; customers do not, unless the administrator enables **subscription required** for that account. Expired/pending subscriptions prevent merchant/captain operational actions; accounts can still sign in so the user can contact administration. Subscription approval is separate from captain/store approval.
+
+Password recovery is available through a single-use, time-limited link sent to the account email. Production must configure `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, `DEFAULT_FROM_EMAIL`, and `PASSWORD_RESET_FRONTEND_URL` in the hosting environment; never commit these values. Email is optional on existing accounts, so an account without a usable email address must contact platform support. Enabling JWT password-revocation checks invalidates tokens issued before the release, requiring users to sign in again once.
 
 Migration files are included. For a fresh database, run `python manage.py migrate`. For an existing database from the previous Waselni MVP, back up `db.sqlite3` and run `python manage.py migrate --fake-initial` so Django recognizes the original tables and then adds the identity and subscription fields. Inspect the migration output; do not force it if your database schema differs from the original MVP.
 
