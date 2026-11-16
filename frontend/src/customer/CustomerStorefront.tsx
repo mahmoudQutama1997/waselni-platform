@@ -56,6 +56,10 @@ type Copy = {
   useLocation: string;
   browseCategories: string;
   services: string;
+  discover: string;
+  menu: string;
+  activity: string;
+  yourOrder: string;
   storeService: string;
   storeServiceHint: string;
   rideService: string;
@@ -128,6 +132,10 @@ const copy: Record<Props['lang'], Copy> = {
     deliveryFeeNote: 'حدد أجرة التوصيل التي تعرض على الكابتن؛ لا تُثبت إلا بعد موافقته.', deliveryFee: 'أجرة التوصيل المقترحة (₪)', storeLocation: 'موقع المتجر', customerLocation: 'حدد موقع استلام الطلب على الخريطة', selectLocation: 'اضغط على الخريطة لتحديد موقعك أو ابحث عن عنوانك.', useLocation: 'استخدم موقعي الحالي',
     browseCategories: 'تصفح التصنيفات',
     services: 'خدمات وصلني',
+    discover: 'اكتشف',
+    menu: 'القائمة',
+    activity: 'النشاط',
+    yourOrder: 'طلبك',
     storeService: 'توصيل المتاجر',
     storeServiceHint: 'اطلب من متاجرك المفضلة',
     rideService: 'ركوب الفسبا',
@@ -199,6 +207,10 @@ const copy: Record<Props['lang'], Copy> = {
     deliveryFeeNote: 'Set your proposed delivery fee. It becomes final only after a captain accepts it.', deliveryFee: 'Proposed delivery fee (₪)', storeLocation: 'Store location', customerLocation: 'Choose your delivery location on the map', selectLocation: 'Click the map to set your location or search for an address.', useLocation: 'Use my current location',
     browseCategories: 'Browse categories',
     services: 'Waselni services',
+    discover: 'DISCOVER',
+    menu: 'MENU',
+    activity: 'ACTIVITY',
+    yourOrder: 'YOUR ORDER',
     storeService: 'Store delivery',
     storeServiceHint: 'Order from your favourite stores',
     rideService: 'Scooter ride',
@@ -270,6 +282,10 @@ const copy: Record<Props['lang'], Copy> = {
     deliveryFeeNote: 'קבעו דמי משלוח מוצעים. המחיר יאושר סופית רק לאחר שקברניט יקבל אותו.', deliveryFee: 'דמי משלוח מוצעים (₪)', storeLocation: 'מיקום החנות', customerLocation: 'בחרו את מיקום המסירה במפה', selectLocation: 'לחצו על המפה כדי לבחור מיקום או חפשו כתובת.', useLocation: 'השתמשו במיקום שלי',
     browseCategories: 'עיון בקטגוריות',
     services: 'שירותי وصلني',
+    discover: 'לגלות',
+    menu: 'תפריט',
+    activity: 'פעילות',
+    yourOrder: 'ההזמנה שלך',
     storeService: 'משלוח מחנויות',
     storeServiceHint: 'הזמינו מהחנויות האהובות עליכם',
     rideService: 'נסיעת קטנוע',
@@ -898,7 +914,7 @@ export default function CustomerStorefront({ lang }: Props) {
           <section className="customer-v2-section" id="stores">
             <div className="customer-v2-heading">
               <div>
-                <span className="customer-v2-eyebrow">DISCOVER</span>
+                <span className="customer-v2-eyebrow">{t.discover}</span>
                 <h2>{t.stores}</h2>
                 <p>{t.storeHint}</p>
               </div>
@@ -992,7 +1008,7 @@ export default function CustomerStorefront({ lang }: Props) {
           <section className="customer-v2-section">
             <div className="customer-v2-heading">
               <div>
-                <span className="customer-v2-eyebrow">MENU</span>
+                <span className="customer-v2-eyebrow">{t.menu}</span>
                 <h2>{activeMerchant?.shop_name || t.products}</h2>
                 <p>{t.products}</p>
               </div>
@@ -1088,7 +1104,7 @@ export default function CustomerStorefront({ lang }: Props) {
           <section className="customer-v2-section customer-v2-recent">
             <div className="customer-v2-heading">
               <div>
-                <span className="customer-v2-eyebrow">ACTIVITY</span>
+                <span className="customer-v2-eyebrow">{t.activity}</span>
                 <h2>{t.orders}</h2>
               </div>
             </div>
@@ -1144,7 +1160,7 @@ export default function CustomerStorefront({ lang }: Props) {
         <aside className="customer-v2-cart-panel" ref={cartPanelRef} id="customer-cart">
           <div className="customer-v2-cart-title">
             <div>
-              <span className="customer-v2-eyebrow">YOUR ORDER</span>
+              <span className="customer-v2-eyebrow">{t.yourOrder}</span>
               <h2>{t.cart}</h2>
             </div>
 
