@@ -7,6 +7,9 @@ import {api,login,token,orderSocket,clearAuth,mediaUrl} from './api'
 const newRequestKey=()=>globalThis.crypto?.randomUUID?.()||`waselni-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 import {dict} from './i18n'
 import NavIcon from './pwa/navIcons.jsx'
+import Icon from './ui/Icons.jsx'
+import {BarChart,DistributionList,EmptyState,ErrorNotice,SkeletonLines,StatCard,StatusBadge,ThemeToggle} from './ui/components.jsx'
+import {markerIcon} from './map/markers.js'
 import MobileNav from './pwa/MobileNav.jsx'
 import PwaBanners from './pwa/PwaBanners.jsx'
 import ConfirmHost,{confirmAction} from './pwa/confirm.jsx'
@@ -85,14 +88,14 @@ function App(){
  const role=me.role
  return <div className="app"><PwaBanners lang={lang}/><ConfirmHost lang={lang}/><ToastViewport t={t}/><aside className="sidebar"><div className="side-brand"><span className="brand-mark small">و</span><b>{t.brand}</b></div><Link className="user-chip" to="/account"><span className="user-chip-avatar">{me.profile_image?<img src={mediaUrl(me.profile_image)} alt=""/>:<span>◉</span>}</span><span><strong>{me.first_name||me.username}</strong><small>{t[`${role}Role`]||t[role]||role}</small></span></Link><nav>
  <Link to="/"><NavIcon name="home"/>{t.home}</Link><Link to="/account"><NavIcon name="user"/>{t.accountProfile}</Link><Link to="/orders"><NavIcon name="orders"/>{t.orders}</Link>{role==='customer'&&<Link to="/ride"><NavIcon name="ride"/>{t.rideService}</Link>}{role==='merchant'&&<><Link to="/catalog"><NavIcon name="catalog"/>{t.catalog}</Link><Link to="/reports"><NavIcon name="reports"/>{t.reports}</Link><Link to="/profile"><NavIcon name="store"/>{t.profile}</Link><Link to="/settlements"><NavIcon name="money"/>{t.settlements}</Link></>}{role==='captain'&&<><Link to="/captain"><NavIcon name="captain"/>{t.captain}</Link><Link to="/settlements"><NavIcon name="money"/>{t.settlements}</Link></>}{role==='admin'&&<><Link to="/admin"><NavIcon name="dashboard"/>{t.dashboard}</Link><Link to="/settlements"><NavIcon name="money"/>{t.settlements}</Link><Link to="/support"><NavIcon name="support"/>{t.support}</Link></>}
- </nav><div className="side-bottom"><select value={lang} onChange={e=>setLang(e.target.value)}><option value="ar">العربية</option><option value="he">עברית</option><option value="en">English</option></select><button className="ghost" onClick={signOut}>{t.logout}</button></div></aside>
+ </nav><div className="side-bottom"><ThemeToggle/><select value={lang} onChange={e=>setLang(e.target.value)}><option value="ar">العربية</option><option value="he">עברית</option><option value="en">English</option></select><button className="ghost" onClick={signOut}>{t.logout}</button></div></aside>
  <main className="content"><header><div><span className="eyebrow">{t.platform.toUpperCase()}</span><h2>{t[`${role}Role`]||t[role]||role} · {t.home}</h2></div><span className="status-pill">● {t.online}</span></header>
  <Routes><Route path="/" element={<Home role={role} t={t} lang={lang}/>}/><Route path="/orders" element={<Orders role={role} t={t}/>}/><Route path="/ride" element={role==='customer'?<RideBooking t={t} lang={lang}/>:<Navigate to="/"/>}/><Route path="/catalog" element={role==='merchant'?<Catalog t={t}/>:<Navigate to="/"/>}/><Route path="/reports" element={<Reports t={t}/>}/><Route path="/account" element={<AccountProfile t={t} me={me} setMe={setMe} onSignOut={signOut} lang={lang}/>}/><Route path="/profile" element={role==='merchant'?<Profile t={t}/>:<Navigate to="/account"/>}/><Route path="/captain" element={<Captain t={t}/>}/><Route path="/settlements" element={<Settlements t={t} role={role}/>}/><Route path="/admin" element={role==='admin'?<Admin t={t}/>:<Navigate to="/"/>}/><Route path="/support" element={<Support t={t}/>}/><Route path="*" element={<Navigate to="/"/>}/></Routes>
  </main><MobileNav role={role} t={t}/></div>
 }
 
 function useLoad(path){const [data,setData]=useState([]),[err,setErr]=useState('');const [tick,setTick]=useState(0);useEffect(()=>{let live=true;const load=()=>api(path).then(d=>{if(live){setData(Array.isArray(d)?d:d.results||[]);setErr('')}}).catch(e=>{if(live)setErr(e.message)});load();const timer=setInterval(load,5000);const ws=orderSocket(()=>load());return()=>{live=false;clearInterval(timer);if(ws)ws.close()}},[path,tick]);return {data,err,reload:()=>setTick(t=>t+1)}}
-function Home({role,t,lang}){if(role==='admin')return <Admin t={t}/>;if(role==='captain')return <Captain t={t}/>;if(role==='merchant')return <Orders role={role} t={t}/>;return <CustomerStorefront lang={lang}/>}
+function Home({role,t,lang}){if(role==='admin')return <Admin t={t}/>;if(role==='captain')return <Captain t={t}/>;if(role==='merchant')return <><MerchantDashboard t={t}/><Orders role={role} t={t}/></>;return <CustomerStorefront lang={lang}/>}
 function RideRouteMap({order,t}){
  const mapRef=useRef(null);
  const mapInstance=useRef(null);
@@ -437,7 +440,7 @@ function Captain({t}){
  async function uploadDocs(e){e.preventDefault();const fd=new FormData();Object.entries(docs).forEach(([k,v])=>v&&fd.append(k,v));try{const d=await api('/captains/me/',{method:'PATCH',body:fd});setProfile(d);setDocs({});setError('');notify(t.captainDocsUploaded,'success')}catch(x){setError(x.message)}}
  async function sos(){if(!(await confirmAction({title:'SOS',message:'هل تريد إرسال بلاغ طوارئ إلى مركز دعم وصلني؟',confirmLabel:'إرسال',cancelLabel:'إلغاء'})))return;let coords='الموقع غير متاح';try{const pos=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,timeout:10000}));coords=`${pos.coords.latitude}, ${pos.coords.longitude}`}catch{}try{await api('/support-tickets/',{method:'POST',body:JSON.stringify({subject:'بلاغ طوارئ SOS',message:`بلاغ طوارئ من الكابتن ${profile?.name||''}. الموقع: ${coords}`})});notify(t.sosCreated,'success')}catch(e){setError(e.message)}}
  const e=profile?.eligibility,online=!!e?.online,documents=profile?.documents||{};
- return <><div className="section-head"><div><h3>{t.captainWorkspace}</h3><p>{t.readyOrders}</p></div><div className="row-actions"><button className="secondary" onClick={sos}>🆘 SOS</button><button disabled={busy||!e||(!online&&!e.can_go_online)} className={online?'secondary':'primary'} onClick={toggle}>{online?t.stopReceiving:t.startReceiving}</button></div></div><div className="panel">
+ return <><div className="section-head"><div><h3>{t.captainWorkspace}</h3><p>{t.readyOrders}</p></div><div className="row-actions"><button className="secondary" onClick={sos}><Icon name="shield" size={15}/> SOS</button><button disabled={busy||!e||(!online&&!e.can_go_online)} className={online?'secondary':'primary'} onClick={toggle}>{online?t.stopReceiving:t.startReceiving}</button></div></div><CaptainEarnings t={t} profile={profile}/><div className="panel">
  {e&&<><p>{profile.name} ({profile.username}) · {t.eligAccountId}: <b>{profile.user_id}</b> · {t.eligProfileId}: <b>{profile.captain_profile_id}</b></p><EligibilityPanel e={e} t={t}/><div className={`captain-gps-status ${profile.current_location_updated_at?'is-active':''}`}><span className="gps-pulse"/><div><b>{profile.current_location_updated_at?(t.gpsSharing||'مشاركة الموقع مفعّلة'):(t.gpsWaiting||'بانتظار أول تحديث للموقع')}</b><small>{profile.current_location_updated_at?`${t.lastLocationUpdate||'آخر تحديث'}: ${new Date(profile.current_location_updated_at).toLocaleTimeString()}`:(t.gpsPermissionHint||'اسمح بالوصول للموقع أثناء العمل لعرض موقعك للزبون')}</small></div></div><div className="document-status"><b>وثائق الكابتن</b><p>الهوية: {documents.identity_uploaded?'تم الرفع':'غير مرفوعة'} · الرخصة: {documents.license_uploaded?'تم الرفع':'غير مرفوعة'} · التأمين: {documents.insurance_uploaded?'تم الرفع':'غير مرفوع'} · التعهد: {documents.undertaking_signed?'موقّع':'غير موقّع'}</p><form className="form-stack" onSubmit={uploadDocs}><label>وثيقة الهوية / التصريح<input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={x=>setDocs(d=>({...d,identity_document:x.target.files?.[0]}))}/></label><label>رخصة القيادة<input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={x=>setDocs(d=>({...d,driving_license_document:x.target.files?.[0]}))}/></label><label>وثيقة التأمين<input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={x=>setDocs(d=>({...d,insurance_document:x.target.files?.[0]}))}/></label><button disabled={!Object.values(docs).some(Boolean)}>رفع الوثائق</button></form></div></>}
  {error&&<p className="error">{error}</p>}</div><Orders role="captain" t={t}/></>}
 
@@ -451,7 +454,7 @@ function Admin({t}){
  return <><div className="section-head"><div><h3>{t.dashboard}</h3><p>{t.overview} · {t.live}</p></div><button className="secondary" onClick={load}>{t.refresh}</button></div>{err&&<p className="error">{err}</p>}
  {summary&&<div className="stats"><Stat label={t.todayOrders} value={summary.orders_today}/><Stat label={t.active} value={summary.active_orders}/><Stat label={t.completedToday} value={summary.completed_today}/><Stat label={t.captains} value={summary.online_captains}/><Stat label={t.merchants} value={summary.open_merchants}/><Stat label={t.sales} value={money(summary.sales_today)}/><Stat label={t.openTickets} value={summary.open_tickets}/></div>}
  <div className="admin-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?'primary':'secondary'} onClick={()=>setTab(id)}>{label}</button>)}</div>
- {tab==='overview'&&<><section className="panel admin-map"><h3>{t.mapTitle}</h3><p>{t.mapNote}</p><AdminOverviewMap stores={data.stores} orders={data.orders}/></section><section className="panel"><h3>{t.ordersSection}</h3><AdminOrders rows={data.orders.slice(0,8)} t={t}/></section></>}
+ {tab==='overview'&&<><AdminAnalytics orders={data.orders} t={t}/><section className="panel admin-map"><h3>{t.mapTitle}</h3><p>{t.mapNote}</p><AdminLiveMap stores={data.stores} orders={data.orders} t={t}/></section><section className="panel"><h3>{t.ordersSection}</h3><AdminOrders rows={data.orders.slice(0,8)} t={t}/></section></>}
  {tab==='users'&&<AdminUsers t={t}/>}{tab==='subscriptions'&&<SubscriptionManagement rows={data.subscriptions} t={t} reload={load}/>}
  {tab==='captains'&&<CaptainManagement t={t} captains={data.captains} busy={busy} update={update} reload={load}/>}
  {tab==='merchants'&&<section className="panel"><h3>{t.merchantManagement} · إدارة المتاجر والمنتجات</h3>{data.stores.length?data.stores.map(m=><article className="admin-row admin-store-row" key={m.id}><div className="admin-store-head">{m.image&&<img src={mediaUrl(m.image)} alt=""/>}<div><b>{m.shop_name}</b><small>المالك: {m.owner_name} · {m.username}</small><small>{m.category} · {m.address||'—'}</small><small>عدد المنتجات: {m.product_count} · {new Date(m.created_at).toLocaleDateString()}</small><span className={`tag ${m.is_open?'ready':'new'}`}>{m.is_open?t.openStore:'بانتظار التفعيل / مغلق'}</span></div><button className="secondary" disabled={busy===`store-${m.id}`} onClick={async()=>{setBusy(`store-${m.id}`);try{await api(`/admin/stores/${m.id}/`,{method:'PATCH',body:JSON.stringify({is_open:!m.is_open})});await load()}catch(e){setErr(e.message)}finally{setBusy('')}}}>{m.is_open?'إيقاف المتجر':'تفعيل المتجر'}</button></div>{m.cover_image&&<img className="admin-store-cover" src={mediaUrl(m.cover_image)} alt=""/>}<div className="admin-store-products">{m.products.map(p=><div key={p.id}>{p.image&&<img src={mediaUrl(p.image)} alt=""/>}<span><b>{p.name}</b><small>{money(p.price)} · {p.available?'متاح':'غير متاح'}</small></span></div>)}</div></article>):<EmptyText text={t.noMerchants}/>}</section>}
@@ -546,4 +549,99 @@ function EmptyText({text}){return <div className="empty compact-empty">{text}</d
 function Support({t}){const {data,reload}=useLoad('/support-tickets/');const [f,setF]=useState({subject:'',message:''});async function send(e){e.preventDefault();try{await api('/support-tickets/',{method:'POST',body:JSON.stringify(f)});setF({subject:'',message:''});reload();notify(t.supportSent,'success')}catch(e){notify(e.message,'error')}}return <><h3>{t.support}</h3><form className="panel form-stack" onSubmit={send}><input placeholder={t.ticketTitle} value={f.subject} onChange={e=>setF({...f,subject:e.target.value})} required/><textarea placeholder={t.ticketDetails} value={f.message} onChange={e=>setF({...f,message:e.target.value})} required/><button>{t.sendTicket}</button></form>{data.map(x=><div className="ticket" key={x.id}><b>{x.subject}</b><p>{x.message}</p><small>{statusLabel(t,x.status)}</small></div>)}</>}
 function Stat({label,value}){return <article className="stat"><small>{label}</small><strong>{value}</strong></article>}
 function Empty({t}){return <div className="empty"><span>✦</span><p>{t.empty}</p></div>}
+/* ---------- Captain earnings (real orders, delivery fees only) ---------- */
+function CaptainEarnings({t,profile}){
+ const [orders,setOrders]=useState([]),[err,setErr]=useState(''),[loaded,setLoaded]=useState(false);
+ useEffect(()=>{let live=true;const load=()=>api('/orders/').then(d=>{if(!live)return;setOrders(Array.isArray(d)?d:d.results||[]);setErr('');setLoaded(true)}).catch(e=>{if(live){setErr(e.message);setLoaded(true)}});load();const id=setInterval(load,30000);return()=>{live=false;clearInterval(id)}},[]);
+ const completed=orders.filter(o=>o.status==='completed');
+ const fee=o=>Number(o.delivery_fee||0);
+ const todayStart=new Date();todayStart.setHours(0,0,0,0);
+ const weekStart=new Date(todayStart);weekStart.setDate(weekStart.getDate()-6);
+ const monthStart=new Date(todayStart.getFullYear(),todayStart.getMonth(),1);
+ const stamp=o=>new Date(o.created_at||0).getTime();
+ const sumSince=since=>completed.filter(o=>stamp(o)>=since.getTime()).reduce((total,o)=>total+fee(o),0);
+ const days=Array.from({length:7},(_,index)=>{const day=new Date(weekStart);day.setDate(day.getDate()+index);const next=new Date(day);next.setDate(next.getDate()+1);return{label:day.toLocaleDateString(document.documentElement.lang||'ar',{weekday:'short'}),value:completed.filter(o=>stamp(o)>=day.getTime()&&stamp(o)<next.getTime()).reduce((total,o)=>total+fee(o),0)}});
+ const recent=completed.slice().sort((a,b)=>stamp(b)-stamp(a)).slice(0,5);
+ return <section className="ds-section"><div className="ds-section-head"><div><span className="ds-eyebrow">EARNINGS</span><h2>{t.captainEarnings}</h2><p>{t.earningsHint}</p></div><span className="ds-badge"><Icon name="wallet" size={12}/>{completed.length} {t.completedOrdersLabel}</span></div>
+ {err&&<ErrorNotice message={err}/>}
+ {!loaded?<SkeletonLines count={3}/>:<><div className="ds-stats">
+  <StatCard label={t.earningsToday} value={money(sumSince(todayStart))} icon="wallet"/>
+  <StatCard label={t.earningsWeek} value={money(sumSince(weekStart))} icon="trending"/>
+  <StatCard label={t.earningsMonth} value={money(sumSince(monthStart))} icon="chart"/>
+  <StatCard label={t.myRating} value={profile?.rating?Number(profile.rating).toFixed(1):'—'} sub={t.rating} icon="star"/>
+ </div>
+ <div className="ds-card"><div className="ds-section-head" style={{marginBottom:'10px'}}><h3>{t.performanceTitle}</h3><span className="ds-badge ds-badge--neutral">{t.last7Days}</span></div><BarChart data={days} valueFormatter={money} emptyLabel={t.noEarningsYet}/></div>
+ <div className="ds-card" style={{marginTop:'12px'}}><h3>{t.transactionHistory}</h3>{recent.length?<div style={{display:'grid',gap:'8px',marginTop:'10px'}}>{recent.map(o=><div key={o.id} style={{display:'flex',justifyContent:'space-between',gap:'10px',fontSize:'12px',paddingBottom:'8px',borderBottom:'1px solid var(--w-line)'}}><span>#{o.id} · {new Date(o.created_at).toLocaleDateString()}</span><b>{money(fee(o))}</b></div>)}</div>:<EmptyState icon="wallet" title={t.noEarningsYet} description={t.earningsHint}/>}</div>
+ </>}</section>
+}
+
+/* ---------- Merchant workspace summary (real report + inventory data) ---------- */
+function MerchantDashboard({t}){
+ const [report,setReport]=useState(null),[products,setProducts]=useState([]),[err,setErr]=useState(''),[loaded,setLoaded]=useState(false);
+ useEffect(()=>{let live=true;const load=()=>Promise.all([api('/merchant/reports/'),api('/products/')]).then(([reportData,productData])=>{if(!live)return;setReport(reportData);setProducts(Array.isArray(productData)?productData:productData.results||[]);setErr('');setLoaded(true)}).catch(e=>{if(live){setErr(e.message);setLoaded(true)}});load();const id=setInterval(load,20000);return()=>{live=false;clearInterval(id)}},[]);
+ const orders=report?.all_orders||[];
+ const pending=orders.filter(o=>['new','accepted','preparing','ready'].includes(o.status));
+ const unavailable=products.filter(p=>p.available===false);
+ const sold=new Map();
+ orders.forEach(o=>{(o.items||[]).forEach(item=>{const name=item.name||`#${item.product_id}`;const row=sold.get(name)||{name,quantity:0,revenue:0};row.quantity+=Number(item.quantity||0);row.revenue+=Number(item.line_total||0);sold.set(name,row)})});
+ const bestSellers=[...sold.values()].sort((a,b)=>b.quantity-a.quantity).slice(0,5);
+ const todayStart=new Date();todayStart.setHours(0,0,0,0);
+ const days=Array.from({length:7},(_,index)=>{const day=new Date(todayStart);day.setDate(day.getDate()-(6-index));const next=new Date(day);next.setDate(next.getDate()+1);const label=day.toLocaleDateString(document.documentElement.lang||'ar',{weekday:'short'});const value=orders.filter(o=>o.status==='completed'&&new Date(o.created_at).getTime()>=day.getTime()&&new Date(o.created_at).getTime()<next.getTime()).reduce((total,o)=>total+Number(o.total||0),0);return{label,value}});
+ return <section className="ds-section"><div className="ds-section-head"><div><span className="ds-eyebrow">MERCHANT</span><h2>{t.merchantDashboard}</h2><p>{t.merchantDashboardHint}</p></div><span className="ds-badge"><Icon name="store" size={12}/>{products.length} {t.productsCount}</span></div>
+ {err&&<ErrorNotice message={err}/>}
+ {!loaded?<SkeletonLines count={3}/>:<>
+ <div className="ds-stats">
+  <StatCard label={t.salesToday} value={money(report?.gross_sales_today||0)} icon="wallet"/>
+  <StatCard label={t.todayOrders} value={report?.orders_today||0} icon="orders"/>
+  <StatCard label={t.completedToday} value={report?.completed_today||0} icon="check"/>
+  <StatCard label={t.pendingOrders} value={pending.length} icon="clock"/>
+  <StatCard label={t.settlementsToday} value={report?.cash_settlements_today?.length||0} icon="money"/>
+ </div>
+ <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:'12px'}}>
+  <div className="ds-card"><h3>{t.salesTrend}</h3><BarChart data={days} valueFormatter={money} emptyLabel={t.noSalesYet}/></div>
+  <div className="ds-card"><div className="ds-section-head" style={{marginBottom:'10px'}}><h3>{t.bestSellers}</h3><span className="ds-badge ds-badge--neutral">{t.unitsSold}</span></div>{bestSellers.length?<div style={{display:'grid',gap:'9px'}}>{bestSellers.map(row=><div key={row.name} style={{display:'flex',justifyContent:'space-between',gap:'8px',fontSize:'12px'}}><span>{row.name}</span><b>{row.quantity} · {money(row.revenue)}</b></div>)}</div>:<EmptyState icon="chart" title={t.noSalesYet}/>}</div>
+  <div className="ds-card"><div className="ds-section-head" style={{marginBottom:'10px'}}><h3>{t.inventoryAlerts}</h3><span className={`ds-badge ${unavailable.length?'ds-badge--warning':'ds-badge--success'}`}>{unavailable.length}</span></div>{unavailable.length?<div style={{display:'grid',gap:'7px'}}>{unavailable.slice(0,6).map(p=><div key={p.id} style={{display:'flex',justifyContent:'space-between',fontSize:'12px'}}><span>{p.name}</span><span className="ds-badge ds-badge--warning">{t.unavailable}</span></div>)}</div>:<EmptyState icon="shield" title={t.inventoryHealthy}/>}</div>
+ </div></>}</section>
+}
+
+/* ---------- Admin analytics from the real operations payload ---------- */
+function AdminAnalytics({orders=[],t}){
+ if(!orders.length)return <section className="panel"><h3>{t.analyticsTitle}</h3><EmptyState icon="chart" title={t.noOrders}/></section>;
+ const todayStart=new Date();todayStart.setHours(0,0,0,0);
+ const days=Array.from({length:7},(_,index)=>{const day=new Date(todayStart);day.setDate(day.getDate()-(6-index));const next=new Date(day);next.setDate(next.getDate()+1);return{label:day.toLocaleDateString(document.documentElement.lang||'ar',{weekday:'short'}),value:orders.filter(o=>{const at=new Date(o.created_at).getTime();return at>=day.getTime()&&at<next.getTime()}).length}});
+ const statusCounts=new Map();
+ orders.forEach(o=>statusCounts.set(o.status,(statusCounts.get(o.status)||0)+1));
+ const statusRows=[...statusCounts.entries()].sort((a,b)=>b[1]-a[1]).map(([label,value])=>({label,value}));
+ const typeCounts=new Map();
+ orders.forEach(o=>{const type=o.order_type||'store';typeCounts.set(type,(typeCounts.get(type)||0)+1)});
+ const typeRows=[...typeCounts.entries()].map(([label,value])=>({label,value}));
+ const cancelled=statusCounts.get('cancelled')||0;
+ const rate=orders.length?Math.round((cancelled/orders.length)*100):0;
+ return <section className="panel"><div className="ds-section-head"><div><h3>{t.analyticsTitle}</h3><p>{t.lastOrdersSample.replace('{n}',orders.length)}</p></div><StatusBadge status={rate>20?'cancelled':'completed'} label={`${t.cancellationRate}: ${rate}%`}/></div>
+ <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:'14px'}}>
+  <div><h4 style={{margin:'0 0 8px',fontSize:'12.5px',color:'var(--w-muted)'}}>{t.ordersByDay}</h4><BarChart data={days} emptyLabel={t.noOrders}/></div>
+  <div><h4 style={{margin:'0 0 8px',fontSize:'12.5px',color:'var(--w-muted)'}}>{t.ordersByStatus}</h4><DistributionList rows={statusRows} total={orders.length} labelFormatter={label=>t[label]||label}/></div>
+  <div><h4 style={{margin:'0 0 8px',fontSize:'12.5px',color:'var(--w-muted)'}}>{t.ordersByType}</h4><DistributionList rows={typeRows} total={orders.length} labelFormatter={label=>t[label]||label}/></div>
+ </div></section>
+}
+
+/* ---------- Admin live operations map with filters and GPS freshness ---------- */
+function AdminLiveMap({stores=[],orders=[],t}){
+ const [statusFilter,setStatusFilter]=useState('active'),[typeFilter,setTypeFilter]=useState('all');
+ const mapRef=useRef(null),mapInstance=useRef(null),layerRef=useRef(null);
+ const filtered=orders.filter(o=>{const statusOk=statusFilter==='all'||(statusFilter==='active'?['new','accepted','preparing','ready','assigned','picked_up','delivering'].includes(o.status):o.status===statusFilter);const typeOk=typeFilter==='all'||(o.order_type||'store')===typeFilter;return statusOk&&typeOk});
+ const latestGps=filtered.map(o=>o.captain_location_updated_at).filter(Boolean).sort().pop();
+ useEffect(()=>{if(!L||!mapRef.current||mapInstance.current)return;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],10);L.tileLayer(MAP_TILE_URL,{maxZoom:19,attribution:MAP_ATTRIBUTION}).addTo(map);layerRef.current=L.layerGroup().addTo(map);mapInstance.current=map;const id=setTimeout(()=>map.invalidateSize(),150);return()=>{clearTimeout(id);map.remove();mapInstance.current=null;layerRef.current=null}},[]);
+ useEffect(()=>{const map=mapInstance.current,layer=layerRef.current;if(!map||!layer)return;layer.clearLayers();const bounds=[];const popup=(title,sub)=>{const el=document.createElement('div');const b=document.createElement('b');b.textContent=title||'—';el.appendChild(b);if(sub){const p=document.createElement('p');p.textContent=sub;el.appendChild(p)}return el};
+  stores.forEach(s=>{if(s.latitude==null||s.longitude==null)return;const point=[Number(s.latitude),Number(s.longitude)];if(!point.every(Number.isFinite))return;L.marker(point,{icon:markerIcon(L,'store')}).addTo(layer).bindPopup(popup(`${t.merchantLabel}: ${s.shop_name}`,`${s.address||''} · ${s.is_open?t.openStore:t.closedStore}`));bounds.push(point)});
+  filtered.forEach(o=>{const points=[];if(o.pickup_latitude!=null&&o.pickup_longitude!=null)points.push([Number(o.pickup_latitude),Number(o.pickup_longitude)]);if(o.dropoff_latitude!=null&&o.dropoff_longitude!=null)points.push([Number(o.dropoff_latitude),Number(o.dropoff_longitude)]);points.forEach((point,index)=>{if(!point.every(Number.isFinite))return;L.marker(point,{icon:markerIcon(L,index?'destination':'pickup')}).addTo(layer).bindPopup(popup(`${t.orderPrefix} #${o.id} · ${index?t.destination:t.pickup}`,`${o.merchant||''} · ${o.dropoff_address||''}`));bounds.push(point)});if(points.length===2)L.polyline(points,{color:'#8054c6',weight:3,dashArray:'6 7'}).addTo(layer);if(o.captain_latitude!=null&&o.captain_longitude!=null){const captainPoint=[Number(o.captain_latitude),Number(o.captain_longitude)];if(captainPoint.every(Number.isFinite)){L.marker(captainPoint,{icon:markerIcon(L,'captain')}).addTo(layer).bindPopup(popup(`${t.captainLabel} · ${t.orderPrefix} #${o.id}`,o.captain_location_updated_at?`${t.lastLocationUpdate}: ${new Date(o.captain_location_updated_at).toLocaleTimeString()}`:t.gpsNone));bounds.push(captainPoint)}}});
+  if(bounds.length===1)map.setView(bounds[0],13);else if(bounds.length>1)map.fitBounds(bounds,{padding:[35,35],maxZoom:14});
+ },[stores,filtered,statusFilter,typeFilter,t]);
+ return <div className="admin-live-map"><div className="ds-seg" role="group" aria-label={t.mapStatusFilter} style={{marginBottom:'10px'}}>
+  {[['active',t.activeOnly],['all',t.allStatuses],['completed',t.completed],['cancelled',t.cancelled]].map(([value,label])=><button key={value} aria-pressed={statusFilter===value} onClick={()=>setStatusFilter(value)}>{label}</button>)}
+ </div><div className="ds-seg" role="group" aria-label={t.mapTypeFilter} style={{marginBottom:'10px'}}>
+  {[['all',t.allTypes],['store',t.store],['ride',t.rideService],['parcel','Parcel']].map(([value,label])=><button key={value} aria-pressed={typeFilter===value} onClick={()=>setTypeFilter(value)}>{label}</button>)}
+ </div><div ref={mapRef} className="location-picker-map"/><div className="map-legend"><span><i className="pickup-dot"/> {t.merchantLabel}</span><span><i className="dropoff-dot"/> {t.destination}</span><span><i className="captain-dot"/> {t.captainLabel}</span><small>{filtered.length} {t.orders} · {stores.filter(s=>s.latitude!=null&&s.longitude!=null).length} {t.merchants} · {latestGps?`${t.lastLocationUpdate}: ${new Date(latestGps).toLocaleTimeString()}`:t.gpsNone}</small></div></div>
+}
+
 export default App

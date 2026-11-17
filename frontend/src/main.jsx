@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './style.css'
 import './tailwind.css'
+import './design-system.css'
 import { registerServiceWorker } from './pwa/registerSW.js'
 registerServiceWorker()
 createRoot(document.getElementById('root')).render(<BrowserRouter><App /></BrowserRouter>)
