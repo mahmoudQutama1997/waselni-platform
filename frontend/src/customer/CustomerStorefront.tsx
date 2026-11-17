@@ -74,6 +74,7 @@ type Copy = {
   trackOrder: string;
   locateMe: string;
   distance: string;
+  distanceUnit: string;
   allCategories: string;
   openingHours: string;
   searchPlaceholder: string;
@@ -145,6 +146,7 @@ const copy: Record<Props['lang'], Copy> = {
     trackOrder: 'تتبع على الخريطة',
     locateMe: 'استخدم موقعي',
     distance: 'يبعد',
+    distanceUnit: 'كم',
     allCategories: 'كل التصنيفات',
     openingHours: 'ساعات العمل',
     searchPlaceholder: 'ابحث باسم المتجر أو التصنيف',
@@ -218,6 +220,7 @@ const copy: Record<Props['lang'], Copy> = {
     trackOrder: 'Track on map',
     locateMe: 'Use my location',
     distance: 'away',
+    distanceUnit: 'km',
     allCategories: 'All categories',
     openingHours: 'Opening hours',
     searchPlaceholder: 'Search by store name or category',
@@ -291,6 +294,7 @@ const copy: Record<Props['lang'], Copy> = {
     trackOrder: 'מעקב במפה',
     locateMe: 'השתמשו במיקום שלי',
     distance: 'במרחק',
+    distanceUnit: 'ק״מ',
     allCategories: 'כל הקטגוריות',
     openingHours: 'שעות פעילות',
     searchPlaceholder: 'חיפוש לפי שם חנות או קטגוריה',
@@ -554,7 +558,7 @@ function StoreCard({
         <span className="cs-store-meta">
           <span><Icon name="star" size={12} />{rating ? rating.toFixed(1) : '—'}</span>
           {merchant.category && <span><Icon name="tag" size={12} />{merchant.category}</span>}
-          {distance != null && <span><Icon name="navigation" size={12} />{distance.toFixed(1)} {t.distance.split(' ')[0]}</span>}
+          {distance != null && <span><Icon name="navigation" size={12} />{t.distance} {distance.toFixed(1)} {t.distanceUnit}</span>}
         </span>
         {merchant.address && (
           <span className="cs-store-meta" style={{ color: 'var(--w-muted)' }}>
