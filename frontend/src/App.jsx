@@ -8,6 +8,7 @@ import {mapMarker} from './map/markers'
 import SafeImage from './components/SafeImage'
 import {setStadiaRole,clearStadiaKey} from './map/stadiaAuth'
 
+import {makeCoalescedLoader,uniqueRows} from './lib/polling.js'
 const newRequestKey=()=>globalThis.crypto?.randomUUID?.()||`waselni-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 import {dict} from './i18n'
 import NavIcon from './pwa/navIcons.jsx'
@@ -196,19 +197,20 @@ function useLoad(path,onEvent){
    return api(path).then(d=>{
     // A response that started before a newer value arrived must never win.
     if(!live||mine!==seq.current||rev!==revision.current)return;
-    setData(Array.isArray(d)?d:d.results||[]);setErr('');setUpdatedAt(Date.now());
+    setData(uniqueRows(Array.isArray(d)?d:d.results||[]));setErr('');setUpdatedAt(Date.now());
    }).catch(e=>{if(live&&mine===seq.current)setErr(e.message||'')});
   };
   const patch=fn=>{revision.current+=1;setData(fn)};
-  const refresh=()=>{if(document.visibilityState!=='hidden')load()};
-  load();
+  // One coalesced refresh serves interval, socket, focus, reconnect and visibility triggers.
+  const refresh=makeCoalescedLoader(load,{minGap:1500});
+  refresh();
   const timer=setInterval(refresh,5000);
   const ws=orderSocket(m=>{
    if(handler.current)handler.current(m,patch);
-   load();
+   refresh();
   });
-  const onVisible=()=>{if(document.visibilityState==='visible')load()};
-  const onRealtime=e=>{if(e.detail&&e.detail.connected)load()};
+  const onVisible=()=>{if(document.visibilityState==='visible')refresh()};
+  const onRealtime=e=>{if(e.detail&&e.detail.connected)refresh()};
   window.addEventListener('focus',refresh);
   window.addEventListener('online',refresh);
   window.addEventListener('waselni:realtime',onRealtime);
@@ -224,15 +226,16 @@ function MerchantHome({t,lang}){
  const [trackError,setTrackError]=useState('');
  useEffect(()=>{
   let live=true,timer=null;
-  const schedule=(list)=>{if(timer){clearInterval(timer);timer=null}if(list.length)timer=setInterval(load,8000)};
+  const schedule=(list)=>{if(timer){clearInterval(timer);timer=null}if(list.length)timer=setInterval(refresh,8000)};
   const load=()=>api('/orders/tracking/').then(d=>{
    if(!live)return;
-   const list=Array.isArray(d)?d:(d?.results||[]);
+   const list=uniqueRows(Array.isArray(d)?d:(d?.results||[]));
    setTracking(list);setTrackError('');schedule(list);
   }).catch(e=>{if(live)setTrackError(e.message||t.actionFailed)});
-  load();
-  const ws=orderSocket(m=>{if(m&&typeof m.type==='string'&&(m.type.startsWith('order.')||m.type.startsWith('captain.')))load()});
-  const onRealtime=e=>{if(e.detail?.connected)load()};
+  const refresh=makeCoalescedLoader(load,{minGap:2500});
+  refresh();
+  const ws=orderSocket(m=>{if(m&&typeof m.type==='string'&&(m.type.startsWith('order.')||m.type.startsWith('captain.')))refresh()});
+  const onRealtime=e=>{if(e.detail?.connected)refresh()};
   window.addEventListener('waselni:realtime',onRealtime);
   return ()=>{live=false;if(timer)clearInterval(timer);ws?.close();window.removeEventListener('waselni:realtime',onRealtime)};
  },[t]);
@@ -311,7 +314,7 @@ function RideRouteMap({order,t}){
   const resize=()=>map.invalidateSize();
   const resizeTimer=setTimeout(resize,180);
   return ()=>{cancelled=true;clearTimeout(resizeTimer);map.remove();mapInstance.current=null;captainMarker.current=null};
- },[pickupLat,pickupLng,dropLat,dropLng,t.pickup,t.destination]);
+ },[hasCoordinates,pickupLat,pickupLng,dropLat,dropLng,t.pickup,t.destination]);
  useEffect(()=>{
   const map=mapInstance.current;
   if(!L||!map)return;
@@ -512,13 +515,15 @@ function LocationPicker({latitude,longitude,onSelect,label='حدد الموقع 
 function AdminOverviewMap({stores=[],orders=[]}){
  const mapRef=useRef(null),mapInstance=useRef(null),layerRef=useRef(null);
  const lang=document.documentElement.lang||'ar',isEn=lang==='en',isHe=lang==='he';
+ // Rebuild layers only when real map data changes, not on every parent render.
+ const mapSignature=`${stores.map(s=>`${s.id}:${s.latitude}:${s.longitude}:${s.is_open}`).join('|')}#${orders.map(o=>`${o.id}:${o.status}:${o.latitude??''}:${o.longitude??''}:${o.captain_latitude??''}:${o.captain_longitude??''}`).join('|')}`;
  const w=isEn?{store:'Store',open:'Open',closed:'Closed',order:'Order',pickup:'Store',dropoff:'Customer destination',captain:'Captain',updated:'Last update',location:'Captain location',storesLegend:'● Stores / pickup',dropoffLegend:'● Customer destination',coords:'stores with coordinates',active:'active orders'}:isHe?{store:'חנות',open:'פתוח',closed:'סגור',order:'הזמנה',pickup:'חנות',dropoff:'יעד הלקוח',captain:'שליח',updated:'עדכון אחרון',location:'מיקום השליח',storesLegend:'● חנויות / איסוף',dropoffLegend:'● יעד הלקוח',coords:'חנויות עם קואורדינטות',active:'הזמנות פעילות'}:{store:'متجر',open:'مفتوح',closed:'مغلق',order:'طلب',pickup:'المتجر',dropoff:'وجهة الزبون',captain:'الكابتن',updated:'آخر تحديث',location:'موقع الكابتن',storesLegend:'● المتاجر / الانطلاق',dropoffLegend:'● وجهة الزبون',coords:'متجر بإحداثيات',active:'طلب نشط'};
  useEffect(()=>{if(!L||!mapRef.current||mapInstance.current)return;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],10);createTileLayer({maxZoom:19}).addTo(map);layerRef.current=L.layerGroup().addTo(map);mapInstance.current=map;const id=setTimeout(()=>map.invalidateSize(),150);return()=>{clearTimeout(id);map.remove();mapInstance.current=null;layerRef.current=null}},[]);
  useEffect(()=>{const map=mapInstance.current,layer=layerRef.current;if(!map||!layer)return;layer.clearLayers();const bounds=[];const popup=(title,sub)=>{const el=document.createElement('div');const b=document.createElement('b');b.textContent=title||'—';el.appendChild(b);if(sub){const p=document.createElement('p');p.textContent=sub;el.appendChild(p)}return el};
   stores.forEach(s=>{if(s.latitude==null||s.longitude==null)return;const pt=[Number(s.latitude),Number(s.longitude)];if(!pt.every(Number.isFinite))return;L.marker(pt,{icon:mapMarker('store')}).addTo(layer).bindPopup(popup(`${w.store}: ${s.shop_name}`,`${s.address||''} · ${s.is_open?w.open:w.closed}`));bounds.push(pt)});
   orders.filter(o=>!['completed','cancelled'].includes(o.status)).forEach(o=>{const pts=[];if(o.pickup_latitude!=null&&o.pickup_longitude!=null)pts.push([Number(o.pickup_latitude),Number(o.pickup_longitude)]);if(o.dropoff_latitude!=null&&o.dropoff_longitude!=null)pts.push([Number(o.dropoff_latitude),Number(o.dropoff_longitude)]);pts.forEach((pt,i)=>{if(!pt.every(Number.isFinite))return;L.circleMarker(pt,{radius:8,color:'#fff',weight:2,fillColor:i?'#df4d67':'#16a36a',fillOpacity:1}).addTo(layer).bindPopup(popup(`${w.order} ${o.order_number} · ${i?w.dropoff:w.pickup}`,`${o.merchant_name||''} · ${o.dropoff_address||''}`));bounds.push(pt)});if(pts.length===2)L.polyline(pts,{color:'#8054c6',weight:3,dashArray:'6 7'}).addTo(layer);if(o.captain_latitude!=null&&o.captain_longitude!=null){const captainPt=[Number(o.captain_latitude),Number(o.captain_longitude)];if(captainPt.every(Number.isFinite)){L.circleMarker(captainPt,{radius:11,color:'#fff',weight:3,fillColor:'#7650bd',fillOpacity:1}).addTo(layer).bindPopup(popup(`${w.captain} · ${w.order} ${o.order_number}`,o.captain_location_updated_at?`${w.updated}: ${new Date(o.captain_location_updated_at).toLocaleTimeString()}`:w.location));bounds.push(captainPt)}}});
   if(bounds.length===1)map.setView(bounds[0],13);else if(bounds.length>1)map.fitBounds(bounds,{padding:[35,35],maxZoom:14});
- },[stores,orders,lang]);
+ },[mapSignature,lang]);
  return <div className="admin-live-map"><div ref={mapRef} className="location-picker-map"/><div className="map-legend"><span>{w.storesLegend}</span><span>{w.dropoffLegend}</span><small>{stores.filter(s=>s.latitude!=null&&s.longitude!=null).length} {w.coords} · {orders.filter(o=>!['completed','cancelled'].includes(o.status)).length} {w.active}</small></div></div>
 }
 
@@ -747,11 +752,11 @@ function Profile({t}){
  if(!profile)return <section className="panel store-profile"><div className="sk-line skeleton w-40"/><div className="sk-block skeleton profile-cover-skeleton"/><div className="sk-grid">{[0,1,2,3].map(i=><div className="sk-card" key={i}/>)}</div>{error&&<p className="error">{error}</p>}</section>
  return <section className="panel store-profile"><div className="section-head"><div><h3>{t.profile}</h3><p>{t.storeProfileSubtitle}</p></div><span className="feature-icon">◉</span></div><form onSubmit={save}><div className={`cover-upload ${coverPreview?'has-image':''}`}>{coverPreview&&<SafeImage className="cover-image" src={coverPreview} alt={profile.shop_name||''}/>}<label htmlFor="store-cover">＋ {t.changeCover}</label><input id="store-cover" type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];setCover(f||null);if(f)setCoverPreview(URL.createObjectURL(f))}}/></div><div className="store-logo-row"><label className="store-logo-upload" htmlFor="store-logo">{logoPreview?<SafeImage src={logoPreview} alt={profile.shop_name||''}/>:<span>＋</span>}<input id="store-logo" type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];setLogo(f||null);if(f)setLogoPreview(URL.createObjectURL(f))}}/></label><div><h3>{profile.shop_name}</h3><small>{t.storeLogoHint}</small></div></div><div className="profile-fields"><label>{t.storeName}<input value={profile.shop_name||''} onChange={e=>update('shop_name',e.target.value)} required/></label><label>{t.storeCategory}<input value={profile.category||''} onChange={e=>update('category',e.target.value)}/></label><label>{t.address}<input value={profile.address||''} onChange={e=>update('address',e.target.value)}/></label><label>{t.openingHours}<input value={profile.opening_hours||''} onChange={e=>update('opening_hours',e.target.value)}/></label><label className="wide-field">{t.description}<textarea rows="4" value={profile.description||''} onChange={e=>update('description',e.target.value)}/></label></div><div className="store-location-section"><h3>{t.storeLocationTitle}</h3><p className="muted-note">{t.storeLocationHint}</p><LocationPicker latitude={profile.latitude??''} longitude={profile.longitude??''} label={t.selectStoreLocation} onSelect={(lat,lng,address)=>setProfile(p=>({...p,latitude:String(roundCoordinate(lat)),longitude:String(roundCoordinate(lng)),address:address||p.address||''}))}/></div>{error&&<p className="error">{error}</p>}{notice&&<p className="success-note">{notice}</p>}<button disabled={saving}>{saving?t.saving:t.saveProfile}</button></form></section>
 }
-function Reports({t}){const [report,setReport]=useState(null),[error,setError]=useState('');useEffect(()=>{let live=true;const load=()=>api('/merchant/reports/').then(x=>{if(live){setReport(x);setError('')}}).catch(e=>live&&setError(e.message));load();const id=setInterval(load,10000);return()=>{live=false;clearInterval(id)}},[]);const rows=report?.all_orders||[];const exportOrders=()=>exportCsv('waselni-merchant-orders.csv',[{key:'order_number',label:t.csvOrderId},{key:'status',label:t.csvStatus},{key:'merchant_name',label:t.csvMerchant},{key:'total',label:t.csvTotal},{key:'created_at',label:t.csvDate}],rows);const exportSettlements=()=>exportCsv('waselni-merchant-settlements.csv',[{key:'order_number',label:t.csvOrderId},{key:'captain_name',label:t.csvCaptain},{key:'amount',label:t.csvAmount},{key:'settled_amount',label:t.csvSettled},{key:'outstanding_amount',label:t.csvOutstanding},{key:'created_at',label:t.csvDate}],report?.cash_settlements||[]);return <><div className="section-head"><div><h3>{t.reports}</h3><p>{t.analyticsTitle||t.reports}</p></div><div className="row-actions"><button className="secondary" disabled={!rows.length} onClick={exportOrders}>{t.exportCsv}</button><button className="secondary" disabled={!report?.cash_settlements?.length} onClick={exportSettlements}>{t.exportCsv} · {t.settlements}</button></div></div>{error&&<p className="error">{error}</p>}{!report&&!error&&<div className="stats">{[0,1,2,3].map(i=><div className="stat skeleton" key={i}/>)}</div>}{report&&<><div className="stats"><Stat icon="sales" label={t.salesTodayCompleted||'مبيعات اليوم المكتملة'} value={money(report.gross_sales_today)}/><Stat icon="orders" label={t.ordersToday||t.todayOrders} value={report.orders_today}/><Stat icon="completed" label={t.completedOrders||t.completedToday} value={report.completed_today}/><Stat icon="sales" label={t.productsDue} value={money(report.cash_products_due)}/></div><p className="note">{report.net_sales_note}</p><h3>{t.orderSettlementStatus}</h3><div className="table-wrap"><table><thead><tr><th>{t.orderPrefix}</th><th>{t.captainColumn||t.captainLabel}</th><th>{t.productsAmount}</th><th>{t.productsSettled}</th><th>{t.outstandingAmount}</th><th>{t.status}</th></tr></thead><tbody>{report.cash_settlements.map(s=><tr key={s.id}><td>{s.order_number}</td><td>{s.captain_name}</td><td>{money(s.amount)}</td><td>{money(s.settled_amount)}</td><td>{money(s.outstanding_amount)}</td><td>{t[s.status]||s.status}</td></tr>)}</tbody></table></div></>}<h3>{t.orders}</h3><div className="table-wrap"><table><thead><tr><th>{t.orderPrefix}</th><th>{t.status}</th><th>{t.total}</th><th>{t.date}</th></tr></thead><tbody>{rows.map(o=><tr key={o.id}><td>{o.order_number}</td><td>{statusLabel(t,o.status)}</td><td>{money(o.total)}</td><td>{new Date(o.created_at).toLocaleDateString()}</td></tr>)}</tbody></table></div></>}
+function Reports({t}){const [report,setReport]=useState(null),[error,setError]=useState('');useEffect(()=>{let live=true;const load=()=>api('/merchant/reports/').then(x=>{if(live){setReport(x);setError('')}}).catch(e=>live&&setError(e.message));const refresh=makeCoalescedLoader(load,{minGap:2000});refresh();const id=setInterval(refresh,10000);return()=>{live=false;clearInterval(id)}},[]);const rows=uniqueRows(report?.all_orders||[]);const exportOrders=()=>exportCsv('waselni-merchant-orders.csv',[{key:'order_number',label:t.csvOrderId},{key:'status',label:t.csvStatus},{key:'merchant_name',label:t.csvMerchant},{key:'total',label:t.csvTotal},{key:'created_at',label:t.csvDate}],rows);const exportSettlements=()=>exportCsv('waselni-merchant-settlements.csv',[{key:'order_number',label:t.csvOrderId},{key:'captain_name',label:t.csvCaptain},{key:'amount',label:t.csvAmount},{key:'settled_amount',label:t.csvSettled},{key:'outstanding_amount',label:t.csvOutstanding},{key:'created_at',label:t.csvDate}],report?.cash_settlements||[]);return <><div className="section-head"><div><h3>{t.reports}</h3><p>{t.analyticsTitle||t.reports}</p></div><div className="row-actions"><button className="secondary" disabled={!rows.length} onClick={exportOrders}>{t.exportCsv}</button><button className="secondary" disabled={!report?.cash_settlements?.length} onClick={exportSettlements}>{t.exportCsv} · {t.settlements}</button></div></div>{error&&<p className="error">{error}</p>}{!report&&!error&&<div className="stats">{[0,1,2,3].map(i=><div className="stat skeleton" key={i}/>)}</div>}{report&&<><div className="stats"><Stat icon="sales" label={t.salesTodayCompleted||'مبيعات اليوم المكتملة'} value={money(report.gross_sales_today)}/><Stat icon="orders" label={t.ordersToday||t.todayOrders} value={report.orders_today}/><Stat icon="completed" label={t.completedOrders||t.completedToday} value={report.completed_today}/><Stat icon="sales" label={t.productsDue} value={money(report.cash_products_due)}/></div><p className="note">{report.net_sales_note}</p><h3>{t.orderSettlementStatus}</h3><div className="table-wrap"><table><thead><tr><th>{t.orderPrefix}</th><th>{t.captainColumn||t.captainLabel}</th><th>{t.productsAmount}</th><th>{t.productsSettled}</th><th>{t.outstandingAmount}</th><th>{t.status}</th></tr></thead><tbody>{(report.cash_settlements||[]).map(s=><tr key={s.id}><td>{s.order_number}</td><td>{s.captain_name}</td><td>{money(s.amount)}</td><td>{money(s.settled_amount)}</td><td>{money(s.outstanding_amount)}</td><td>{t[s.status]||s.status}</td></tr>)}</tbody></table></div></>}<h3>{t.orders}</h3><div className="table-wrap"><table><thead><tr><th>{t.orderPrefix}</th><th>{t.status}</th><th>{t.total}</th><th>{t.date}</th></tr></thead><tbody>{rows.map(o=><tr key={o.id}><td>{o.order_number}</td><td>{statusLabel(t,o.status)}</td><td>{money(o.total)}</td><td>{new Date(o.created_at).toLocaleDateString()}</td></tr>)}</tbody></table></div></>}
 function Captain({t}){
  const [profile,setProfile]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[docs,setDocs]=useState({});
  async function loadProfile(){try{const d=await api('/captains/me/');setProfile(d);setError('')}catch(e){setError(e.message)}}
- useEffect(()=>{loadProfile();const timer=setInterval(loadProfile,5000);const ws=orderSocket(m=>{if(m&&(m.type==='captain.eligibility'||m.type==='captain.location'))loadProfile()});return()=>{clearInterval(timer);if(ws)ws.close()}},[]);
+ useEffect(()=>{const refresh=makeCoalescedLoader(loadProfile,{minGap:1500});refresh();const timer=setInterval(refresh,5000);const ws=orderSocket(m=>{if(m&&(m.type==='captain.eligibility'||m.type==='captain.location'))refresh()});return()=>{clearInterval(timer);if(ws)ws.close()}},[]);
  useEffect(()=>{
   if(!profile?.online||!navigator.geolocation)return;
   let lastSentAt=0,lastLat=null,lastLng=null,disposed=false;
@@ -782,7 +787,7 @@ function Settlements({t,role,canManageFinance=false}){
   try{setData(await api('/settlements/ledger/'));setError('')}
   catch(e){setError(e.message||t.actionFailed)}
  }
- useEffect(()=>{load();const timer=setInterval(load,7000);return()=>clearInterval(timer)},[]);
+ useEffect(()=>{const refresh=makeCoalescedLoader(load,{minGap:2000});refresh();const timer=setInterval(refresh,7000);return()=>clearInterval(timer)},[]);
  useEffect(()=>{if(!captainId&&data?.captains?.length)setCaptainId(String(data.captains[0].id))},[captainId,data?.captains]);
  const availableOrders=(data?.orders||[]).filter(row=>Number(row.captain_id)===Number(captainId)&&Number(row.outstanding_amount)>0);
  const selectedOrders=availableOrders.filter(row=>orderIds.includes(row.id));
@@ -867,7 +872,7 @@ function StatusBreakdown({rows,t}){
 function Admin({t}){
  const [summary,setSummary]=useState(null),[data,setData]=useState({captains:[],merchants:[],stores:[],orders:[],tickets:[],subscriptions:[]}),[tab,setTab]=useState('overview'),[err,setErr]=useState(''),[busy,setBusy]=useState('');
  async function load(){try{const [s,o,subscriptions,stores]=await Promise.all([api('/dashboard/summary/'),api('/admin/operations/'),api('/admin/subscriptions/'),api('/admin/stores/')]);setSummary(s);setData({...o,subscriptions,stores});setErr('')}catch(e){setErr(e.message)}}
- useEffect(()=>{load();const timer=setInterval(load,7000);return()=>clearInterval(timer)},[]);
+ useEffect(()=>{const refresh=makeCoalescedLoader(load,{minGap:2000});refresh();const timer=setInterval(refresh,7000);return()=>clearInterval(timer)},[]);
  async function update(kind,id,value){setBusy(`${kind}-${id}`);try{await api('/admin/operations/',{method:'PATCH',body:JSON.stringify({kind,id,value})});await load()}catch(e){setErr(e.message)}finally{setBusy('')}}
  const tabs=[['overview',t.overview],['users',t.userManagement],['subscriptions',t.subscriptionsTitle],['captains',t.captainManagement],['merchants',t.merchantManagement],['orders',t.orderManagement],['tickets',t.ticketManagement]];
  return <><div className="section-head"><div><h3>{t.dashboard}</h3><p>{t.overview} · {t.live}</p></div><button className="secondary" onClick={load}>{t.refresh}</button></div>{err&&<p className="error">{err}</p>}

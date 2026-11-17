@@ -9,6 +9,7 @@ import SafeImage from '../components/SafeImage';
 import ServiceIcon from '../components/ServiceIcon';
 import type { CartLine, Merchant, Order, Product } from './types';
 import { GEOCODING_REVERSE_URL, GEOCODING_SEARCH_URL, geocodeUrl } from '../config';
+import { makeCoalescedLoader, uniqueRows } from '../lib/polling';
 
 type Props = { lang: 'ar' | 'en' | 'he' };
 
@@ -393,10 +394,12 @@ const readCart = (): CartLine[] => {
   }
 };
 
-const rows = <T,>(value: unknown): T[] =>
-  Array.isArray(value)
-    ? value as T[]
+const rows = <T,>(value: unknown): T[] => {
+  const list = Array.isArray(value)
+    ? (value as T[])
     : ((value as { results?: T[] })?.results || []);
+  return uniqueRows(list) as T[];
+};
 
 function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { merchant: Merchant | null; latitude: number | null; longitude: number | null; onSelect: (lat: number, lng: number, address?: string) => void; t: Copy }) {
   const mapRef = useRef<HTMLDivElement | null>(null);
@@ -520,8 +523,10 @@ export default function CustomerStorefront({ lang }: Props) {
       .finally(() => {
         if (alive) setOrdersLoading(false);
       });
-    loadOrders();
-    const orderTimer = setInterval(loadOrders, 5000);
+    // Coalesced so the 5s fallback never stacks on a slow in-flight request.
+    const refreshOrders = makeCoalescedLoader(loadOrders, { minGap: 2000 });
+    refreshOrders();
+    const orderTimer = setInterval(refreshOrders, 5000);
 
     return () => {
       alive = false;
