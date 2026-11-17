@@ -1683,3 +1683,53 @@ tbody tr:hover { background: #faf8fd; }
   background: var(--portal-accent-soft);
   color: var(--portal-accent);
 }
+
+/* ---------------------------------------------------------- error boundary */
+.ui-error {
+  display: grid;
+  place-items: center;
+  padding: 28px 16px;
+  min-height: 320px;
+}
+.ui-error--page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, var(--w-purple-tint), #fff);
+}
+.ui-error-card {
+  width: 100%;
+  max-width: 460px;
+  padding: 28px 24px;
+  border: 1px solid var(--w-line);
+  border-radius: var(--w-radius-lg);
+  background: #fff;
+  box-shadow: var(--w-shadow);
+  text-align: center;
+}
+.ui-error-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  background: var(--w-danger-soft);
+  color: var(--w-danger);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+.ui-error-card h2 { margin: 0 0 8px; font-size: 1.15rem; color: var(--w-ink); }
+.ui-error-card p { margin: 0 0 18px; color: var(--w-muted); line-height: 1.7; font-size: .92rem; }
+.ui-error-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.ui-error-detail { margin-top: 18px; text-align: start; }
+.ui-error-detail summary { cursor: pointer; color: var(--w-muted); font-size: .82rem; }
+.ui-error-detail code {
+  display: block;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--w-radius-sm);
+  background: var(--w-purple-tint);
+  color: var(--w-danger);
+  font-size: .78rem;
+  word-break: break-word;
+  white-space: pre-wrap;
+}

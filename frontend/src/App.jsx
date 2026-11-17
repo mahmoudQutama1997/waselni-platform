@@ -9,6 +9,7 @@ import DeliveryMap from './map/DeliveryMap'
 import {isValidLatLng,isLocationStale} from './map/routing'
 import {makeMapLabels} from './map/labels'
 import SafeImage from './components/SafeImage'
+import ErrorBoundary from './components/ErrorBoundary'
 import {setStadiaRole,clearStadiaKey} from './map/stadiaAuth'
 
 import {makeCoalescedLoader,uniqueRows} from './lib/polling.js'
@@ -184,7 +185,7 @@ function App(){
  {role!=='admin'&&<NavLink to="/support"><NavIcon name="support"/>{t.support}</NavLink>}
  </nav><div className="side-bottom"><select value={lang} onChange={e=>setLang(e.target.value)} aria-label={t.language}><option value="ar">العربية</option><option value="he">עברית</option><option value="en">English</option></select><button className="ghost" onClick={signOut}>{t.logout}</button></div></aside>
  <main className="content"><header><div className="header-title"><span className="eyebrow">{t.platform.toUpperCase()} · {t[role]||role}</span><h2>{t[titleKey]||t.home}</h2>{subtitle&&<p className="header-subtitle">{subtitle}</p>}</div><div className="header-actions"><NotificationCenter lang={lang} role={role}/><span className={`status-pill ${online?'':'is-offline'}`} title={online?t.online:t.offline}>{online?t.online:t.offline}</span></div></header>
- <Routes><Route path="/" element={<Home role={role} t={t} lang={lang}/>}/><Route path="/orders" element={<Orders role={role} t={t}/>}/><Route path="/ride" element={role==='customer'?<RideBooking t={t} lang={lang}/>:<Navigate to="/"/>}/><Route path="/catalog" element={role==='merchant'?<Catalog t={t}/>:<Navigate to="/"/>}/><Route path="/reports" element={<Reports t={t}/>}/><Route path="/account" element={<AccountProfile t={t} me={me} setMe={setMe} onSignOut={signOut} lang={lang}/>}/><Route path="/profile" element={role==='merchant'?<Profile t={t}/>:<Navigate to="/account"/>}/><Route path="/captain" element={<Captain t={t}/>}/><Route path="/settlements" element={<Settlements t={t} role={role} canManageFinance={role==='admin'||!!me.is_finance_staff}/>}/><Route path="/admin" element={role==='admin'?<Admin t={t}/>:<Navigate to="/"/>}/><Route path="/support" element={<Support t={t}/>}/><Route path="*" element={<Navigate to="/"/>}/></Routes>
+ <ErrorBoundary lang={lang} resetKey={location.pathname}><Routes><Route path="/" element={<Home role={role} t={t} lang={lang}/>}/><Route path="/orders" element={<Orders role={role} t={t}/>}/><Route path="/ride" element={role==='customer'?<RideBooking t={t} lang={lang} role={role}/>:<Navigate to="/"/>}/><Route path="/catalog" element={role==='merchant'?<Catalog t={t}/>:<Navigate to="/"/>}/><Route path="/reports" element={<Reports t={t}/>}/><Route path="/account" element={<AccountProfile t={t} me={me} setMe={setMe} onSignOut={signOut} lang={lang}/>}/><Route path="/profile" element={role==='merchant'?<Profile t={t}/>:<Navigate to="/account"/>}/><Route path="/captain" element={<Captain t={t}/>}/><Route path="/settlements" element={<Settlements t={t} role={role} canManageFinance={role==='admin'||!!me.is_finance_staff}/>}/><Route path="/admin" element={role==='admin'?<Admin t={t}/>:<Navigate to="/"/>}/><Route path="/support" element={<Support t={t}/>}/><Route path="*" element={<Navigate to="/"/>}/></Routes></ErrorBoundary>
  </main><MobileNav role={role} t={t} isFinanceStaff={!!me.is_finance_staff}/></div>
 }
 
@@ -612,7 +613,7 @@ function CustomerHome({t}){
  </>;
 }
 
-function RideBooking({t,lang}){
+function RideBooking({t,lang,role}){
  const [form,setForm]=useState({pickup_address:'',dropoff_address:'',pickup_latitude:'',pickup_longitude:'',dropoff_latitude:'',dropoff_longitude:'',delivery_fee:'15.00',requires_checkpoint:false});
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const submitLock=useRef(false),requestKey=useRef(newRequestKey());
