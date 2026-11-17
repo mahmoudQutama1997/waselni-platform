@@ -1,0 +1,411 @@
+/* ============================================================ WASELNI MAPS
+   Shared map system: labelled semantic markers, routing chrome, filters and
+   overlays. Colours stay inside the WASELNI violet/lavender identity. */
+
+:root {
+  --wm-store: #6b35a6;
+  --wm-store-deep: #4b1f7f;
+  --wm-customer: #1f8a5f;
+  --wm-customer-deep: #126b49;
+  --wm-captain: #7c3aed;
+  --wm-captain-deep: #5522b8;
+  --wm-route: #7c3aed;
+  --wm-danger: #cc3b53;
+  --wm-surface: #ffffff;
+  --wm-surface-soft: #f7f3fd;
+  --wm-line: #e6ddf3;
+  --wm-ink: #2c1d45;
+  --wm-muted: #6f6385;
+}
+
+/* ------------------------------------------------------------- marker shell */
+.waselni-marker {
+  background: transparent;
+  border: 0;
+  overflow: visible;
+}
+
+.wm {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translate(-18px, -38px);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.wm-pin {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50% 50% 50% 6px;
+  transform: rotate(-45deg);
+  background: linear-gradient(150deg, var(--wm-store), var(--wm-store-deep));
+  border: 2.5px solid #fff;
+  box-shadow: 0 7px 16px rgba(40, 18, 70, .34);
+  pointer-events: auto;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.wm-glyph {
+  display: inline-flex;
+  transform: rotate(45deg);
+  color: #fff;
+}
+.wm-glyph svg { width: 18px; height: 18px; display: block; }
+.wm:hover .wm-pin,
+.leaflet-marker-icon:focus-visible .wm-pin {
+  transform: rotate(-45deg) scale(1.1);
+  box-shadow: 0 11px 22px rgba(40, 18, 70, .42);
+}
+
+.wm-customer .wm-pin,
+.wm-delivery .wm-pin { background: linear-gradient(150deg, #2aa273, var(--wm-customer-deep)); }
+.wm-captain .wm-pin { background: linear-gradient(150deg, #9b6bf0, var(--wm-captain-deep)); }
+.wm-pickup .wm-pin { background: linear-gradient(150deg, #8a5bd0, #5a2a99); }
+.wm-dropoff .wm-pin { background: linear-gradient(150deg, #ef7386, var(--wm-danger)); }
+
+/* Captain assigned to the order on screen wins attention over every other pin. */
+.wm-captain.is-assigned .wm-pin {
+  box-shadow: 0 0 0 5px rgba(124, 58, 237, .18), 0 8px 18px rgba(40, 18, 70, .4);
+}
+.wm-captain.is-assigned .wm-pin::after {
+  content: "";
+  position: absolute;
+  inset: -9px;
+  border-radius: inherit;
+  border: 2px solid rgba(124, 58, 237, .4);
+  animation: wmPulse 2.2s ease-out infinite;
+}
+@keyframes wmPulse {
+  0% { opacity: .9; transform: scale(.9); }
+  100% { opacity: 0; transform: scale(1.25); }
+}
+
+/* Real GPS bearing arrow, rotated by the component. */
+.wm-bearing {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
+  display: grid;
+  place-items: center;
+  color: #7c3aed;
+  transform-origin: 50% 50%;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 3px rgba(255, 255, 255, .9));
+}
+.wm-bearing svg { width: 15px; height: 15px; }
+
+.wm-badge {
+  position: absolute;
+  top: -7px;
+  inset-inline-end: -7px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: #2c1d45;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(45deg);
+  border: 2px solid #fff;
+}
+
+/* Stale or filtered-out positions must never look live. */
+.wm.is-stale .wm-pin { filter: grayscale(.55); opacity: .82; }
+.wm.is-stale .wm-label { border-style: dashed; }
+.wm.is-dimmed .wm-pin { opacity: .45; }
+
+/* ------------------------------------------------------------ marker labels */
+.wm-label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 172px;
+  padding: 5px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .97);
+  border: 1px solid var(--wm-line);
+  box-shadow: 0 5px 14px rgba(40, 18, 70, .16);
+  color: var(--wm-ink);
+  line-height: 1.25;
+  pointer-events: auto;
+}
+.wm-label b {
+  font-size: 12px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 154px;
+}
+.wm-label small {
+  font-size: 10.5px;
+  color: var(--wm-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 154px;
+}
+.wm-captain .wm-label b { color: var(--wm-captain-deep); }
+.wm-customer .wm-label b { color: var(--wm-customer-deep); }
+
+/* Labels are the noisiest element: hide them when zoomed out so pins never
+   collide, but keep the captain name visible because it carries live meaning. */
+.map-zoom-far .wm:not(.wm-captain) .wm-label { display: none; }
+
+.wm-route-arrow {
+  color: #fff;
+  background: transparent;
+  border: 0;
+}
+.wm-route-arrow span {
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  filter: drop-shadow(0 1px 2px rgba(60, 30, 100, .7));
+}
+.wm-route-arrow svg { width: 12px; height: 12px; }
+
+/* --------------------------------------------------------------- map shell */
+.wm-shell {
+  position: relative;
+  width: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--wm-line);
+  background: var(--wm-surface-soft);
+  isolation: isolate;
+}
+.wm-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.wm-shell .leaflet-container { font: inherit; background: #eef1f6; }
+
+.wm-controls {
+  position: absolute;
+  top: 10px;
+  inset-inline-start: 10px;
+  z-index: 500;
+  display: grid;
+  gap: 5px;
+}
+.wm-controls button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--wm-line);
+  background: rgba(255, 255, 255, .96);
+  color: #4b2b78;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 3px 9px rgba(40, 18, 70, .14);
+  padding: 0;
+}
+.wm-controls button:hover { background: #fff; color: #3a1d61; }
+.wm-controls button:disabled { opacity: .45; cursor: not-allowed; }
+
+.wm-legend {
+  position: absolute;
+  bottom: 10px;
+  inset-inline-end: 10px;
+  z-index: 500;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin: 0;
+  padding: 7px 11px;
+  list-style: none;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .95);
+  border: 1px solid var(--wm-line);
+  box-shadow: 0 4px 12px rgba(40, 18, 70, .12);
+  font-size: 11px;
+  color: var(--wm-muted);
+  max-width: calc(100% - 20px);
+}
+.wm-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.wm-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 50% 50% 50% 2px;
+  transform: rotate(-45deg);
+  background: var(--wm-store);
+  border: 1.5px solid #fff;
+  box-shadow: 0 1px 3px rgba(40, 18, 70, .3);
+  flex: 0 0 auto;
+}
+.wm-swatch-customer, .wm-swatch-delivery { background: var(--wm-customer); }
+.wm-swatch-captain { background: var(--wm-captain); }
+.wm-swatch-dropoff { background: var(--wm-danger); }
+.wm-swatch-route { border-radius: 2px; transform: none; background: var(--wm-route); height: 4px; width: 16px; }
+
+.wm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 450;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 14px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--wm-muted);
+  background: rgba(247, 243, 253, .82);
+  backdrop-filter: blur(2px);
+}
+.wm-overlay-empty { background: rgba(247, 243, 253, .9); }
+.wm-overlay-error { color: var(--wm-danger); background: rgba(255, 244, 246, .9); }
+.wm-spinner {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid rgba(124, 58, 237, .25);
+  border-top-color: var(--wm-route);
+  animation: wmSpin .8s linear infinite;
+}
+@keyframes wmSpin { to { transform: rotate(360deg); } }
+
+.wm-metrics {
+  position: absolute;
+  top: 10px;
+  inset-inline-end: 10px;
+  z-index: 500;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 7px 11px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .96);
+  border: 1px solid var(--wm-line);
+  box-shadow: 0 4px 12px rgba(40, 18, 70, .12);
+  font-size: 11.5px;
+  color: var(--wm-muted);
+  max-width: calc(100% - 90px);
+}
+.wm-metrics b { color: var(--wm-ink); font-variant-numeric: tabular-nums; }
+.wm-metrics small {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.wm-chip-road { background: #e8f7ef; color: #14724c; }
+.wm-chip-approx { background: #fff4e2; color: #8a5a12; }
+.wm-chip-muted { color: var(--wm-muted); }
+
+/* ------------------------------------------------------------------ popups */
+.wm-popup { display: grid; gap: 5px; min-width: 150px; max-width: 230px; }
+.wm-popup b { font-size: 13px; color: var(--wm-ink); }
+.wm-popup p { margin: 0; font-size: 12px; color: var(--wm-muted); line-height: 1.45; }
+.wm-popup-image {
+  width: 100%;
+  height: 82px;
+  object-fit: cover;
+  border-radius: 9px;
+  border: 1px solid var(--wm-line);
+}
+.wm-popup-stale {
+  justify-self: start;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #fdeef1;
+  color: #9c2b40;
+}
+
+/* ----------------------------------------------------------------- filters */
+.wm-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+.wm-filters .search-field { flex: 1 1 220px; min-width: 0; }
+.wm-filter-field {
+  display: grid;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  color: var(--wm-muted);
+  flex: 0 1 150px;
+  min-width: 0;
+}
+.wm-filter-field select {
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--wm-line);
+  background: var(--wm-surface);
+  color: var(--wm-ink);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------- responsive */
+@media (max-width: 640px) {
+  .wm-label { display: none; }
+  .wm-captain .wm-label { display: inline-flex; max-width: 120px; }
+  .wm-label b, .wm-label small { max-width: 104px; }
+  /* Leave the bottom-right corner to Leaflet's attribution line. */
+  .wm-legend { font-size: 10px; gap: 4px 9px; padding: 6px 9px; bottom: 26px; max-width: calc(100% - 132px); }
+  /* Keep the distance/ETA chip beside the zoom controls, clear of both the
+     legend and Leaflet's attribution line. */
+  .wm-metrics {
+    top: 10px;
+    bottom: auto;
+    inset-inline-start: 52px;
+    inset-inline-end: auto;
+    font-size: 10.5px;
+    padding: 6px 9px;
+    max-width: calc(100% - 64px);
+  }
+  .wm-controls button { width: 30px; height: 30px; font-size: 15px; }
+  .wm-filter-field { flex: 1 1 120px; }
+}
+
+/* ------------------------------------------------------------------- dark */
+@media (prefers-color-scheme: dark) {
+  .wm-label,
+  .wm-legend,
+  .wm-metrics,
+  .wm-controls button {
+    background: rgba(34, 24, 52, .94);
+    border-color: #4a3a66;
+    color: #eae3f7;
+  }
+  .wm-label b, .wm-metrics b { color: #f4effc; }
+  .wm-label small { color: #b8abc9; }
+  .wm-shell { background: #201830; border-color: #3c2f54; }
+  .wm-overlay { background: rgba(28, 20, 44, .86); color: #cbbfe0; }
+  .wm-popup b { color: #f4effc; }
+  .wm-popup p { color: #b8abc9; }
+}
+
+/* Heading row shared by every portal's map card. */
+.map-heading-tags{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.map-heading-tags .tag{font-size:10.5px}

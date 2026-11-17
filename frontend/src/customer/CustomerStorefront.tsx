@@ -1,10 +1,10 @@
-import L from '../map/leaflet';
-import { createTileLayer } from '../map/tiles';
-import { mapMarker } from '../map/markers';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api, roundCoordinate } from '../api';
+import { api, mediaUrl, roundCoordinate } from '../api';
+import DeliveryMap from '../map/DeliveryMap';
+import type { MapPoint } from '../map/DeliveryMap';
+import { makeMapLabels } from '../map/labels';
 import SafeImage from '../components/SafeImage';
 import ServiceIcon from '../components/ServiceIcon';
 import type { CartLine, Merchant, Order, Product } from './types';
@@ -402,45 +402,45 @@ const rows = <T,>(value: unknown): T[] => {
 };
 
 function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { merchant: Merchant | null; latitude: number | null; longitude: number | null; onSelect: (lat: number, lng: number, address?: string) => void; t: Copy }) {
-  const mapRef = useRef<HTMLDivElement | null>(null);
-  const mapInstance = useRef<any>(null);
-  const customerMarker = useRef<any>(null);
-  const storeMarker = useRef<any>(null);
   const [query, setQuery] = useState('');
   const [mapError, setMapError] = useState('');
   const [searching, setSearching] = useState(false);
-  useEffect(() => {
-    if (!L || !mapRef.current || mapInstance.current) return;
-    const map = L.map(mapRef.current, { scrollWheelZoom: false }).setView([31.95, 35.21], 12);
-    createTileLayer({ maxZoom: 19 }).addTo(map);
-    map.on('click', (event: any) => select(event.latlng.lat, event.latlng.lng));
-    mapInstance.current = map;
-    const timer = window.setTimeout(() => map.invalidateSize(), 180);
-    return () => { window.clearTimeout(timer); map.remove(); mapInstance.current = null; customerMarker.current = null; storeMarker.current = null; };
-  }, []);
-  useEffect(() => {
-    const map = mapInstance.current;
-if (!map) return;
-    if (!L || !map) return;
-    if (merchant?.latitude != null && merchant?.longitude != null) {
-      const point = [Number(merchant.latitude), Number(merchant.longitude)];
-      if (point.every(Number.isFinite)) {
-        if (storeMarker.current) storeMarker.current.setLatLng(point);
-        else storeMarker.current = L.circleMarker(point, { radius: 10, color: '#fff', weight: 3, fillColor: '#6b35a6', fillOpacity: 1 }).addTo(map).bindPopup(merchant.shop_name);
-      }
-    } else if (storeMarker.current) { map.removeLayer(storeMarker.current); storeMarker.current = null; }
-    if (latitude != null && longitude != null) {
-      const point = [latitude, longitude];
-      if (customerMarker.current) customerMarker.current.setLatLng(point);
-      else customerMarker.current = L.marker(point, { draggable: true, icon: mapMarker('customer') }).addTo(map).bindPopup(t.customerLocation);
-      customerMarker.current.off('dragend').on('dragend', (event: any) => { const p = event.target.getLatLng(); select(p.lat, p.lng); });
-    } else if (customerMarker.current) { map.removeLayer(customerMarker.current); customerMarker.current = null; }
-    const points: number[][] = [];
-    if (merchant?.latitude != null && merchant?.longitude != null) points.push([Number(merchant.latitude), Number(merchant.longitude)]);
-    if (latitude != null && longitude != null) points.push([latitude, longitude]);
-    if (points.length > 1) map.fitBounds(points, { padding: [35, 35], maxZoom: 15 });
-    else if (points.length) map.setView(points[0], 15);
-  }, [merchant?.latitude, merchant?.longitude, merchant?.shop_name, latitude, longitude, t.customerLocation]);
+  const [recenterKey, setRecenterKey] = useState(0);
+  const labels = makeMapLabels(t as unknown as Record<string, unknown>, (document.documentElement.lang || 'ar') as 'ar' | 'en' | 'he', 'customer');
+  const storeLat = merchant?.latitude != null ? Number(merchant.latitude) : null;
+  const storeLng = merchant?.longitude != null ? Number(merchant.longitude) : null;
+  const hasStore = storeLat != null && storeLng != null && Number.isFinite(storeLat) && Number.isFinite(storeLng);
+  const hasDrop = latitude != null && longitude != null && Number.isFinite(latitude) && Number.isFinite(longitude);
+
+  // Only the chosen store and the delivery point are drawn; the shop keeps its
+  // real name and logo so the customer recognises where the order comes from.
+  const points: MapPoint[] = [];
+  if (hasStore) {
+    points.push({
+      id: 'store',
+      kind: 'store',
+      lat: storeLat,
+      lng: storeLng,
+      label: merchant?.shop_name || labels.store,
+      sublabel: merchant?.address || '',
+      popup: { title: merchant?.shop_name || labels.store, lines: [merchant?.address] },
+    });
+  }
+  if (hasDrop) {
+    points.push({
+      id: 'customer',
+      kind: 'customer',
+      lat: latitude,
+      lng: longitude,
+      label: t.customerLocation,
+      draggable: true,
+      popup: { title: t.customerLocation, lines: [t.selectLocation] },
+    });
+  }
+  const route = hasStore && hasDrop
+    ? { from: [storeLat as number, storeLng as number] as [number, number], to: [Number(latitude), Number(longitude)] as [number, number] }
+    : null;
+
   async function select(lat: number, lng: number) {
     onSelect(lat, lng);
     try {
@@ -457,15 +457,39 @@ if (!map) return;
       if (!response.ok) throw new Error(t.addressNotFound);
       const results = await response.json(); if (!results.length) throw new Error(t.addressNotFound);
       const lat = Number(results[0].lat), lng = Number(results[0].lon);
-      onSelect(lat, lng, results[0].display_name || query); mapInstance.current?.setView([lat, lng], 16);
+      onSelect(lat, lng, results[0].display_name || query);
+      setRecenterKey(key => key + 1);
     } catch (error) { setMapError(error instanceof Error ? error.message : t.addressNotFound); }
     finally { setSearching(false); }
   }
   function locate() {
     if (!navigator.geolocation) { setMapError(t.locationUnsupported); return; }
-    navigator.geolocation.getCurrentPosition(position => { const { latitude: lat, longitude: lng } = position.coords; select(lat, lng); mapInstance.current?.setView([lat, lng], 16); setMapError(''); }, () => setMapError(t.locationDenied), { enableHighAccuracy: true, timeout: 12000 });
+    navigator.geolocation.getCurrentPosition(
+      position => { const { latitude: lat, longitude: lng } = position.coords; select(lat, lng); setRecenterKey(key => key + 1); setMapError(''); },
+      () => setMapError(t.locationDenied),
+      { enableHighAccuracy: true, timeout: 12000 },
+    );
   }
-  return <div className="checkout-location-wrap"><div className="checkout-location-tools"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(); } }} placeholder={t.searchAddress}/><button type="button" disabled={searching} onClick={() => search()}>{searching ? t.searching : t.searchAction}</button><button type="button" className="secondary" onClick={locate}>{t.useLocation}</button></div><div ref={mapRef} className="checkout-location-map"/><p className="muted-note">{t.selectLocation} {merchant ? `${t.storeLocation}: ${merchant.shop_name}` : ''}</p><div className="checkout-map-legend"><span><i className="checkout-store-dot"/> {t.storeLocation}</span><span><i className="checkout-customer-dot"/> {t.customerLocation}</span></div>{latitude != null && longitude != null && <small dir="ltr">{latitude.toFixed(6)}, {longitude.toFixed(6)}</small>}{mapError && <p className="error">{mapError}</p>}</div>;
+  return <div className="checkout-location-wrap">
+    <div className="checkout-location-tools">
+      <input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(); } }} placeholder={t.searchAddress}/>
+      <button type="button" disabled={searching} onClick={() => search()}>{searching ? t.searching : t.searchAction}</button>
+      <button type="button" className="secondary" onClick={locate}>{t.useLocation}</button>
+    </div>
+    <DeliveryMap
+      points={points}
+      route={route}
+      labels={labels}
+      legend={[{ kind: 'store', label: t.storeLocation }, { kind: 'customer', label: t.customerLocation }]}
+      height={330}
+      fitKey={[merchant?.id || '', recenterKey].join('-')}
+      emptyText={t.selectLocation}
+      onPointMove={(id, lat, lng) => { if (id === 'customer') select(lat, lng); }}
+    />
+    <p className="muted-note">{t.selectLocation} {merchant ? `${t.storeLocation}: ${merchant.shop_name}` : ''}</p>
+    {latitude != null && longitude != null && <small dir="ltr">{latitude.toFixed(6)}, {longitude.toFixed(6)}</small>}
+    {mapError && <p className="error">{mapError}</p>}
+  </div>;
 }
 
 export default function CustomerStorefront({ lang }: Props) {

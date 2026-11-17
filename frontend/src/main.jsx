@@ -6,6 +6,7 @@ import { isNativePlatform } from './platform'
 import './style.css'
 import './tailwind.css'
 import './design.css'
+import './map/map.css'
 import { registerServiceWorker } from './pwa/registerSW.js'
 
 const native = isNativePlatform()

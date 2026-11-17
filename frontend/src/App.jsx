@@ -4,7 +4,10 @@ import React,{useEffect,useMemo,useState,useRef} from 'react'
 import {Routes,Route,Link,NavLink,Navigate,useLocation,useNavigate} from 'react-router-dom'
 import {api,login,token,orderSocket,clearAuth,mediaUrl,roundCoordinate} from './api'
 import {createTileLayer} from './map/tiles'
-import {mapMarker} from './map/markers'
+import {mapMarker,createMarkerIcon} from './map/markers'
+import DeliveryMap from './map/DeliveryMap'
+import {isValidLatLng,isLocationStale} from './map/routing'
+import {makeMapLabels} from './map/labels'
 import SafeImage from './components/SafeImage'
 import {setStadiaRole,clearStadiaKey} from './map/stadiaAuth'
 
@@ -262,7 +265,7 @@ function MerchantTracking({orders=[],error='',t,lang}){
      <div className="tracking-captain"><span className="mini-avatar">{order.captain_profile_image?<SafeImage src={order.captain_profile_image} alt={order.captain_name||''}/>:<span>◉</span>}</span><div><small>{t.trackingCaptain}</small><b>{order.captain_name||'—'}</b></div><span className={`tag ${order.status}`}>{statusLabel(t,order.status)}</span></div>
      <div className="tracking-updated"><small>{t.trackingUpdated}</small><b dir="ltr">{updated?new Date(updated).toLocaleString():t.noCaptainLocation}</b>{updated&&<span className={`tracking-indicator ${fresh?'':'is-muted'}`}>{fresh?t.live:t.trackingUnavailable}</span>}</div>
     </div>
-    <RideRouteMap order={order} t={t}/>
+    <RideRouteMap order={order} t={t} role="merchant"/>
     {!hasCaptainLocation&&<p className="tracking-unavailable">{t.trackingUnavailable}{updated?` · ${t.trackingUpdated}: ${new Date(updated).toLocaleString()}`:''}</p>}
     <p className="tracking-privacy">🔒 {t.trackingPrivacy}</p>
    </>}
@@ -270,63 +273,42 @@ function MerchantTracking({orders=[],error='',t,lang}){
  </section>;
 }
 
-function RideRouteMap({order,t}){
- const mapRef=useRef(null);
- const mapInstance=useRef(null);
- const captainMarker=useRef(null);
- const [routeState,setRouteState]=useState('loading');
-  const [routeMetrics,setRouteMetrics]=useState(null);
- const rawCoords=[order.pickup_latitude,order.pickup_longitude,order.dropoff_latitude,order.dropoff_longitude];
- const hasCoordinates=rawCoords.every(v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v)));
- const pickupLat=Number(order.pickup_latitude), pickupLng=Number(order.pickup_longitude);
- const dropLat=Number(order.dropoff_latitude), dropLng=Number(order.dropoff_longitude);
- useEffect(()=>{
-  if(!L||!mapRef.current||!hasCoordinates)return;
-  let cancelled=false;
-  
-  const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([pickupLat,pickupLng],13);
-  mapInstance.current=map;
-  createTileLayer({maxZoom:19}).addTo(map);
-  const start=L.circleMarker([pickupLat,pickupLng],{radius:9,color:'#fff',weight:3,fillColor:'#16a36a',fillOpacity:1}).addTo(map).bindPopup(t.pickup);
-  const end=L.circleMarker([dropLat,dropLng],{radius:9,color:'#fff',weight:3,fillColor:'#e34f66',fillOpacity:1}).addTo(map).bindPopup(t.destination);
-  const captainLat=Number(order.captain_latitude),captainLng=Number(order.captain_longitude);
-  if(order.captain_latitude!=null&&order.captain_longitude!=null&&Number.isFinite(captainLat)&&Number.isFinite(captainLng)){
-   captainMarker.current=L.circleMarker([captainLat,captainLng],{radius:11,color:'#fff',weight:3,fillColor:'#7650bd',fillOpacity:1}).addTo(map).bindPopup(t.captainLocationLive||'موقع الكابتن');
-  }
-  const bounds=L.latLngBounds([[pickupLat,pickupLng],[dropLat,dropLng]]);
-  if(captainMarker.current)bounds.extend(captainMarker.current.getLatLng());
-  map.fitBounds(bounds,{padding:[35,35],maxZoom:15});
-  setRouteState('loading');
-  const url=`${OSRM_BASE}/route/v1/driving/${pickupLng},${pickupLat};${dropLng},${dropLat}?overview=full&geometries=geojson&steps=true`;
-  fetch(url).then(r=>{if(!r.ok)throw new Error('routing unavailable');return r.json()}).then(data=>{
-   if(cancelled)return;
-   const coords=data?.routes?.[0]?.geometry?.coordinates;
-   if(!coords?.length)throw new Error('route missing');
-   const line=L.polyline(coords.map(([lng,lat])=>[lat,lng]),{color:'#7650bd',weight:6,opacity:.9,lineCap:'round',lineJoin:'round'}).addTo(map);
-   map.fitBounds(line.getBounds(),{padding:[38,38]});
-   setRouteMetrics({distanceKm:data.routes[0].distance/1000,durationMinutes:Math.round(data.routes[0].duration/60)});
-    setRouteState('road');
-  }).catch(()=>{
-   if(cancelled)return;
-   L.polyline([[pickupLat,pickupLng],[dropLat,dropLng]],{color:'#7650bd',weight:5,dashArray:'9 8',opacity:.85}).addTo(map);
-   setRouteState('approx');
-  });
-  const resize=()=>map.invalidateSize();
-  const resizeTimer=setTimeout(resize,180);
-  return ()=>{cancelled=true;clearTimeout(resizeTimer);map.remove();mapInstance.current=null;captainMarker.current=null};
- },[hasCoordinates,pickupLat,pickupLng,dropLat,dropLng,t.pickup,t.destination]);
- useEffect(()=>{
-  const map=mapInstance.current;
-  if(!L||!map)return;
-  const lat=Number(order.captain_latitude),lng=Number(order.captain_longitude);
-  const valid=order.captain_latitude!=null&&order.captain_longitude!=null&&Number.isFinite(lat)&&Number.isFinite(lng);
-  if(!valid){if(captainMarker.current){map.removeLayer(captainMarker.current);captainMarker.current=null;}return;}
-  if(captainMarker.current)captainMarker.current.setLatLng([lat,lng]);
-  else captainMarker.current=L.circleMarker([lat,lng],{radius:11,color:'#fff',weight:3,fillColor:'#7650bd',fillOpacity:1}).addTo(map).bindPopup(t.captainLocationLive||'موقع الكابتن');
- },[order.captain_latitude,order.captain_longitude,t.captainLocationLive]);
- if(!hasCoordinates)return <div className="ride-map-missing">{t.routeNoCoordinates}</div>;
- const captainFresh=order.captain_location_updated_at&&Date.now()-new Date(order.captain_location_updated_at).getTime()<45000;
- return <div className="captain-ride-map-wrap"><div className="captain-map-heading"><b>{t.liveTrackingTitle||t.routeMapTitle}</b><span className={order.captain_latitude!=null?'tracking-indicator':'tracking-indicator is-muted'}>{order.captain_latitude!=null?(captainFresh?(t.captainLocationLive||'الكابتن مباشر'):(t.captainLocationStale||'آخر موقع معروف')):(t.captainLocationUnavailable||'بانتظار موقع الكابتن')}</span></div><div className="captain-ride-map" ref={mapRef}/>{routeMetrics&&<div className="route-metrics"><span>{t.routeDistance}: <b>{routeMetrics.distanceKm.toFixed(2)} km</b></span><span>{t.routeDuration}: <b>{routeMetrics.durationMinutes} {t.minutesUnit}</b></span></div>}<div className="captain-route-legend"><span><i className="pickup-dot"/> {t.pickup}</span><span><i className="dropoff-dot"/> {t.destination}</span><span><i className="captain-dot"/> {t.captain||'الكابتن'}</span></div></div>
+function RideRouteMap({order,t,role='customer'}){
+ const lang=document.documentElement.lang||'ar';
+ const labels=makeMapLabels(t,lang,role==='captain'?'captain':role==='merchant'?'merchant':'customer');
+ const stage=order.status||'new';
+ const statusText=statusLabel(t,stage);
+ const pickupOk=isValidLatLng(order.pickup_latitude,order.pickup_longitude);
+ const dropOk=isValidLatLng(order.dropoff_latitude,order.dropoff_longitude);
+ const captainOk=order.captain_latitude!=null&&order.captain_longitude!=null&&isValidLatLng(order.captain_latitude,order.captain_longitude);
+ // The API withholds captain coordinates unless a captain is assigned, so the
+ // marker appears only once the order really has one.
+ const captainVisible=Boolean(order.captain)&&captainOk;
+ const stale=captainVisible&&isLocationStale(order.captain_location_updated_at);
+ const carrying=['picked_up','delivering','awaiting_confirmation','completed'].includes(stage);
+ const points=[];
+ if(pickupOk)points.push({id:'store-'+order.id,kind:'store',lat:order.pickup_latitude,lng:order.pickup_longitude,label:order.merchant_name||labels.store,sublabel:order.pickup_address||'',popup:{title:order.merchant_name||labels.store,lines:[order.pickup_address,t.status+': '+statusText]}});
+ if(dropOk)points.push({id:'customer-'+order.id,kind:'customer',lat:order.dropoff_latitude,lng:order.dropoff_longitude,label:labels.customer,sublabel:order.dropoff_address||'',popup:{title:labels.customer,lines:[order.dropoff_address,order.customer_name?t.customerName+': '+order.customer_name:null,order.dropoff_notes]}});
+ if(captainVisible)points.push({id:'captain-'+order.id,kind:'captain',lat:Number(order.captain_latitude),lng:Number(order.captain_longitude),label:order.captain_name||labels.captain,assigned:true,stale,sublabel:stale?labels.stale:labels.live,popup:{title:order.captain_name||labels.captain,image:order.captain_profile_image,lines:[order.captain_location_updated_at?labels.updated+': '+new Date(order.captain_location_updated_at).toLocaleString():null,stale?labels.stale:labels.live,carrying?labels.destination:labels.pickup]}});
+ // Route follows the real delivery stage: captain to store before pickup, then
+ // captain to the customer; otherwise the store-to-customer leg.
+ let route=null;
+ const captainPoint=[Number(order.captain_latitude),Number(order.captain_longitude)];
+ if(captainVisible&&stage==='assigned'&&role==='captain'&&pickupOk){
+  route={from:captainPoint,to:[Number(order.pickup_latitude),Number(order.pickup_longitude)]};
+ }else if(captainVisible&&carrying&&dropOk&&stage!=='completed'){
+  route={from:captainPoint,to:[Number(order.dropoff_latitude),Number(order.dropoff_longitude)]};
+ }else if(pickupOk&&dropOk){
+  route={from:[Number(order.pickup_latitude),Number(order.pickup_longitude)],to:[Number(order.dropoff_latitude),Number(order.dropoff_longitude)]};
+ }
+ if(!pickupOk&&!dropOk)return <div className="ride-map-missing">{labels.noPoints}</div>;
+ const legend=[{kind:'store',label:order.merchant_name||labels.store},{kind:'customer',label:labels.customer}];
+ if(captainVisible)legend.push({kind:'captain',label:order.captain_name||labels.captain});
+ const live=stage!=='completed'&&stage!=='cancelled';
+ return <div className="captain-ride-map-wrap">
+  <div className="captain-map-heading"><b>{live?(t.liveTrackingTitle||t.routeMapTitle):(t.completed||statusText)}</b><div className="map-heading-tags"><span className={'tag '+stage}>{statusText}</span><span className={captainVisible&&!stale&&live?'tracking-indicator':'tracking-indicator is-muted'}>{captainVisible?(live?(stale?labels.stale:labels.live):labels.stale):(t.captainLocationUnavailable||'بانتظار موقع الكابتن')}</span></div></div>
+  <DeliveryMap points={points} route={route} labels={labels} legend={legend} height={320} fitKey={order.id+'-'+stage}/>
+ </div>
 }
 
 function OrderProgress({order,t}){
@@ -462,7 +444,7 @@ function Orders({role,t}){
    {(role==='captain'||role==='merchant')&&o.merchant_arrived_at&&<p className="note">{t.captainArrivedStore||'تم وصول الكابتن للمتجر'}: {new Date(o.merchant_arrived_at).toLocaleTimeString()}</p>}
    <p>{o.pickup_address||'—'} {o.order_type==='ride'?'→':''} {o.dropoff_address||'—'}</p>
    {o.dropoff_notes&&<p className="note">{t.deliveryDetails||'تفاصيل التوصيل'}: {o.dropoff_notes}</p>}
-   {['new','ready','assigned','picked_up','delivering'].includes(o.status)&&o.pickup_latitude!=null&&o.dropoff_latitude!=null&&(role==='customer'||role==='captain')&&<RideRouteMap order={o} t={t}/>}
+   {['new','ready','assigned','picked_up','delivering'].includes(o.status)&&o.pickup_latitude!=null&&o.dropoff_latitude!=null&&(role==='customer'||role==='captain')&&<RideRouteMap order={o} t={t} role={role}/>}
    <div className="item-list">{(o.items||[]).map((i,n)=><span key={n}>{i.name} × {i.quantity}{i.line_total!=null&&<b> · {money(i.line_total)}</b>}</span>)}</div>
    {role==='merchant'&&o.status==='new'&&<div className="actions"><select value={mins[o.id]||10} onChange={e=>setMins({...mins,[o.id]:Number(e.target.value)})}>{[10,15,20,30,40].map(n=><option key={n}>{n}</option>)}</select><button disabled={busy===o.id} onClick={()=>act(`/orders/${o.id}/accept/`,{prep_minutes:mins[o.id]||10},o.id)}>{busy===o.id?t.actionInProgress:t.accept}</button><button type="button" className="secondary danger" disabled={busy===o.id} onClick={()=>confirmAction({title:t.rejectOrder,message:`${t.orderNumber} ${o.order_number} · ${money(o.total)}`,confirmLabel:t.rejectConfirm,cancelLabel:t.back}).then(ok=>{if(ok)act(`/orders/${o.id}/status/`,{status:'cancelled'},o.id)})}>{t.rejectOrder}</button></div>}
    {role==='merchant'&&o.status==='accepted'&&<button disabled={busy===o.id} onClick={()=>act(`/orders/${o.id}/status/`,{status:'preparing'},o.id)}>{t.startPreparing}</button>}
@@ -498,10 +480,10 @@ function LocationPicker({latitude,longitude,onSelect,label='حدد الموقع 
  useEffect(()=>{
  const map=mapInstance.current;if(!map)return;
   const lat=Number(latitude),lng=Number(longitude),valid=latitude!==''&&latitude!==null&&latitude!==undefined&&longitude!==''&&longitude!==null&&longitude!==undefined&&Number.isFinite(lat)&&Number.isFinite(lng);
-  if(valid){if(selectedMarker.current)selectedMarker.current.setLatLng([lat,lng]);else {selectedMarker.current=L.marker([lat,lng],{draggable:true,icon:mapMarker('delivery')}).addTo(map).bindPopup(mapWords.delivery);selectedMarker.current.on('dragend',e=>{const pt=e.target.getLatLng();pickLocation(pt.lat,pt.lng)})}}
+  if(valid){if(selectedMarker.current)selectedMarker.current.setLatLng([lat,lng]);else {selectedMarker.current=L.marker([lat,lng],{draggable:true,icon:createMarkerIcon({kind:'customer',label:mapWords.delivery})}).addTo(map).bindPopup(mapWords.delivery);selectedMarker.current.on('dragend',e=>{const pt=e.target.getLatLng();pickLocation(pt.lat,pt.lng)})}}
   else if(selectedMarker.current){map.removeLayer(selectedMarker.current);selectedMarker.current=null;}
   const rlat=Number(referenceLatitude),rlng=Number(referenceLongitude),refValid=referenceLatitude!==null&&referenceLatitude!==undefined&&referenceLongitude!==null&&referenceLongitude!==undefined&&Number.isFinite(rlat)&&Number.isFinite(rlng);
-  if(refValid){if(referenceMarker.current)referenceMarker.current.setLatLng([rlat,rlng]);else referenceMarker.current=L.circleMarker([rlat,rlng],{radius:9,color:'#fff',weight:3,fillColor:'#7040bd',fillOpacity:1}).addTo(map).bindPopup(referenceLabel);}
+  if(refValid){if(referenceMarker.current)referenceMarker.current.setLatLng([rlat,rlng]);else referenceMarker.current=L.marker([rlat,rlng],{icon:createMarkerIcon({kind:'store',label:referenceLabel})}).addTo(map).bindPopup(referenceLabel);}
   else if(referenceMarker.current){map.removeLayer(referenceMarker.current);referenceMarker.current=null;}
   const pts=[];if(valid)pts.push([lat,lng]);if(refValid)pts.push([rlat,rlng]);if(pts.length===2)map.fitBounds(pts,{padding:[35,35],maxZoom:15});else if(pts.length===1)map.setView(pts[0],15);
  },[latitude,longitude,referenceLatitude,referenceLongitude,referenceLabel]);
@@ -512,19 +494,63 @@ function LocationPicker({latitude,longitude,onSelect,label='حدد الموقع 
  return <div className="location-picker"><div className="location-picker-tools"><div className="location-picker-search"><input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();search(e)}}} placeholder={mapWords.find}/><button type="button" onClick={search} disabled={searching}>{searching?mapWords.searching:mapWords.search}</button></div><button type="button" className="secondary" onClick={locate}>{mapWords.current}</button></div><div ref={mapRef} className="location-picker-map" role="application" aria-label={mapLabel}/><p className="map-instructions">{mapLabel} — {mapWords.instructions}</p>{latitude!==''&&longitude!==''&&latitude!=null&&longitude!=null&&<small className="coordinate-readout">Latitude: {Number(latitude).toFixed(6)} · Longitude: {Number(longitude).toFixed(6)}</small>}{mapError&&<p className="error">{mapError}</p>}</div>
 }
 
-function AdminOverviewMap({stores=[],orders=[]}){
- const mapRef=useRef(null),mapInstance=useRef(null),layerRef=useRef(null);
- const lang=document.documentElement.lang||'ar',isEn=lang==='en',isHe=lang==='he';
- // Rebuild layers only when real map data changes, not on every parent render.
- const mapSignature=`${stores.map(s=>`${s.id}:${s.latitude}:${s.longitude}:${s.is_open}`).join('|')}#${orders.map(o=>`${o.id}:${o.status}:${o.latitude??''}:${o.longitude??''}:${o.captain_latitude??''}:${o.captain_longitude??''}`).join('|')}`;
- const w=isEn?{store:'Store',open:'Open',closed:'Closed',order:'Order',pickup:'Store',dropoff:'Customer destination',captain:'Captain',updated:'Last update',location:'Captain location',storesLegend:'● Stores / pickup',dropoffLegend:'● Customer destination',coords:'stores with coordinates',active:'active orders'}:isHe?{store:'חנות',open:'פתוח',closed:'סגור',order:'הזמנה',pickup:'חנות',dropoff:'יעד הלקוח',captain:'שליח',updated:'עדכון אחרון',location:'מיקום השליח',storesLegend:'● חנויות / איסוף',dropoffLegend:'● יעד הלקוח',coords:'חנויות עם קואורדינטות',active:'הזמנות פעילות'}:{store:'متجر',open:'مفتوح',closed:'مغلق',order:'طلب',pickup:'المتجر',dropoff:'وجهة الزبون',captain:'الكابتن',updated:'آخر تحديث',location:'موقع الكابتن',storesLegend:'● المتاجر / الانطلاق',dropoffLegend:'● وجهة الزبون',coords:'متجر بإحداثيات',active:'طلب نشط'};
- useEffect(()=>{if(!L||!mapRef.current||mapInstance.current)return;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],10);createTileLayer({maxZoom:19}).addTo(map);layerRef.current=L.layerGroup().addTo(map);mapInstance.current=map;const id=setTimeout(()=>map.invalidateSize(),150);return()=>{clearTimeout(id);map.remove();mapInstance.current=null;layerRef.current=null}},[]);
- useEffect(()=>{const map=mapInstance.current,layer=layerRef.current;if(!map||!layer)return;layer.clearLayers();const bounds=[];const popup=(title,sub)=>{const el=document.createElement('div');const b=document.createElement('b');b.textContent=title||'—';el.appendChild(b);if(sub){const p=document.createElement('p');p.textContent=sub;el.appendChild(p)}return el};
-  stores.forEach(s=>{if(s.latitude==null||s.longitude==null)return;const pt=[Number(s.latitude),Number(s.longitude)];if(!pt.every(Number.isFinite))return;L.marker(pt,{icon:mapMarker('store')}).addTo(layer).bindPopup(popup(`${w.store}: ${s.shop_name}`,`${s.address||''} · ${s.is_open?w.open:w.closed}`));bounds.push(pt)});
-  orders.filter(o=>!['completed','cancelled'].includes(o.status)).forEach(o=>{const pts=[];if(o.pickup_latitude!=null&&o.pickup_longitude!=null)pts.push([Number(o.pickup_latitude),Number(o.pickup_longitude)]);if(o.dropoff_latitude!=null&&o.dropoff_longitude!=null)pts.push([Number(o.dropoff_latitude),Number(o.dropoff_longitude)]);pts.forEach((pt,i)=>{if(!pt.every(Number.isFinite))return;L.circleMarker(pt,{radius:8,color:'#fff',weight:2,fillColor:i?'#df4d67':'#16a36a',fillOpacity:1}).addTo(layer).bindPopup(popup(`${w.order} ${o.order_number} · ${i?w.dropoff:w.pickup}`,`${o.merchant_name||''} · ${o.dropoff_address||''}`));bounds.push(pt)});if(pts.length===2)L.polyline(pts,{color:'#8054c6',weight:3,dashArray:'6 7'}).addTo(layer);if(o.captain_latitude!=null&&o.captain_longitude!=null){const captainPt=[Number(o.captain_latitude),Number(o.captain_longitude)];if(captainPt.every(Number.isFinite)){L.circleMarker(captainPt,{radius:11,color:'#fff',weight:3,fillColor:'#7650bd',fillOpacity:1}).addTo(layer).bindPopup(popup(`${w.captain} · ${w.order} ${o.order_number}`,o.captain_location_updated_at?`${w.updated}: ${new Date(o.captain_location_updated_at).toLocaleTimeString()}`:w.location));bounds.push(captainPt)}}});
-  if(bounds.length===1)map.setView(bounds[0],13);else if(bounds.length>1)map.fitBounds(bounds,{padding:[35,35],maxZoom:14});
- },[mapSignature,lang]);
- return <div className="admin-live-map"><div ref={mapRef} className="location-picker-map"/><div className="map-legend"><span>{w.storesLegend}</span><span>{w.dropoffLegend}</span><small>{stores.filter(s=>s.latitude!=null&&s.longitude!=null).length} {w.coords} · {orders.filter(o=>!['completed','cancelled'].includes(o.status)).length} {w.active}</small></div></div>
+function AdminOverviewMap({stores=[],orders=[],t={}}){
+ const lang=document.documentElement.lang||'ar';
+ const labels=makeMapLabels(t,lang,'admin');
+ const [status,setStatus]=useState('active');
+ const [service,setService]=useState('all');
+ const [storeId,setStoreId]=useState('all');
+ const [query,setQuery]=useState('');
+ const words=lang==='en'
+  ?{open:'Open',closed:'Closed',all:'All',active:'Active orders',status:'Status',service:'Service',store:'Store',search:'Search order, store or captain',empty:'No locations match the current filters',legendStore:'Store',legendCustomer:'Delivery location',legendCaptain:'Captain',legendRoute:'Active route',live:'Live GPS',stale:'GPS interrupted',captains:'captains',orders:'active orders',stores:'stores',storeType:'Store',parcelType:'Parcel',rideType:'Ride'}
+  :lang==='he'
+   ?{open:'פתוח',closed:'סגור',all:'הכל',active:'הזמנות פעילות',status:'סטטוס',service:'שירות',store:'חנות',search:'חיפוש הזמנה, חנות או שליח',empty:'אין מיקומים התואמים למסננים',legendStore:'חנות',legendCustomer:'מיקום המסירה',legendCaptain:'שליח',legendRoute:'מסלול פעיל',live:'GPS חי',stale:'ה-GPS נותק',captains:'שליחים',orders:'הזמנות פעילות',stores:'חנויות',storeType:'חנות',parcelType:'חבילה',rideType:'נסיעה'}
+   :{open:'مفتوح',closed:'مغلق',all:'الكل',active:'الطلبات النشطة',status:'الحالة',service:'الخدمة',store:'المتجر',search:'ابحث عن طلب أو متجر أو كابتن',empty:'لا توجد مواقع مطابقة للفلاتر الحالية',legendStore:'متجر',legendCustomer:'موقع التوصيل',legendCaptain:'الكابتن',legendRoute:'مسار نشط',live:'تحديث GPS مباشر',stale:'انقطع تحديث GPS',captains:'كباتن',orders:'طلبات نشطة',stores:'متاجر',storeType:'متجر',parcelType:'شحن',rideType:'توصيل'};
+ const term=query.trim().toLowerCase();
+ const activeOrders=orders.filter(o=>!['completed','cancelled'].includes(o.status));
+ const filtered=activeOrders.filter(o=>{
+  const matchesStatus=status==='all'||status==='active'||o.status===status;
+  const matchesService=service==='all'||o.order_type===service;
+  const matchesStore=storeId==='all'||String(o.merchant)===String(storeId);
+  const haystack=[o.order_number,o.merchant_name,o.customer_name,o.captain_name,o.dropoff_address].filter(Boolean).join(' ').toLowerCase();
+  return matchesStatus&&matchesService&&matchesStore&&(!term||haystack.includes(term));
+ });
+ const points=[],seen=new Set();
+ stores.filter(s=>storeId==='all'||String(s.id)===String(storeId)).forEach(s=>{
+  if(!isValidLatLng(s.latitude,s.longitude))return;
+  seen.add(Number(s.latitude).toFixed(5)+','+Number(s.longitude).toFixed(5));
+  points.push({id:'store-'+s.id,kind:'store',lat:s.latitude,lng:s.longitude,label:s.shop_name,sublabel:s.is_open?words.open:words.closed,popup:{title:s.shop_name,lines:[s.address,s.is_open?words.open:words.closed]}});
+ });
+ filtered.forEach(o=>{
+  if(isValidLatLng(o.dropoff_latitude,o.dropoff_longitude)){
+   const key=Number(o.dropoff_latitude).toFixed(5)+','+Number(o.dropoff_longitude).toFixed(5);
+   if(!seen.has(key)){
+    seen.add(key);
+    points.push({id:'drop-'+o.id,kind:'customer',lat:o.dropoff_latitude,lng:o.dropoff_longitude,label:labels.order+' '+o.order_number,sublabel:o.dropoff_address||'',popup:{title:labels.order+' '+o.order_number,lines:[o.dropoff_address,o.merchant_name,statusLabel(t,o.status)]}});
+   }
+  }
+  if(isValidLatLng(o.captain_latitude,o.captain_longitude)){
+   const stale=isLocationStale(o.captain_location_updated_at);
+   points.push({id:'captain-'+o.id,kind:'captain',lat:o.captain_latitude,lng:o.captain_longitude,label:o.captain_name||labels.captain,assigned:true,stale,sublabel:stale?words.stale:words.live,popup:{title:o.captain_name||labels.captain,image:o.captain_profile_image,lines:[labels.order+' '+o.order_number,o.captain_location_updated_at?labels.updated+': '+new Date(o.captain_location_updated_at).toLocaleString():null,stale?words.stale:words.live]}});
+  }
+ });
+ const secondaryLines=filtered.slice(0,20).filter(o=>isValidLatLng(o.pickup_latitude,o.pickup_longitude)&&isValidLatLng(o.dropoff_latitude,o.dropoff_longitude)).map(o=>[[Number(o.pickup_latitude),Number(o.pickup_longitude)],[Number(o.dropoff_latitude),Number(o.dropoff_longitude)]]);
+ const staleCaptains=filtered.filter(o=>o.captain_latitude!=null&&isLocationStale(o.captain_location_updated_at)).length;
+ const liveCaptains=filtered.filter(o=>o.captain_latitude!=null&&!isLocationStale(o.captain_location_updated_at)).length;
+ const fitKey=[status,service,storeId,term,filtered.map(o=>o.id).join(',')].join('|');
+ const statusOptions=[['active',words.active],['all',words.all],['new',statusLabel(t,'new')],['accepted',statusLabel(t,'accepted')],['preparing',statusLabel(t,'preparing')],['ready',statusLabel(t,'ready')],['assigned',statusLabel(t,'assigned')],['picked_up',statusLabel(t,'picked_up')],['delivering',statusLabel(t,'delivering')],['awaiting_confirmation',statusLabel(t,'awaiting_confirmation')]];
+ return <div className="admin-live-map">
+  <div className="wm-filters">
+   <div className="search-field"><span aria-hidden="true">⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={words.search} aria-label={words.search}/></div>
+   <label className="wm-filter-field"><span>{words.status}</span><select value={status} onChange={e=>setStatus(e.target.value)}>{statusOptions.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>
+   <label className="wm-filter-field"><span>{words.service}</span><select value={service} onChange={e=>setService(e.target.value)}><option value="all">{words.all}</option><option value="store">{words.storeType}</option><option value="parcel">{words.parcelType}</option><option value="ride">{words.rideType}</option></select></label>
+   <label className="wm-filter-field"><span>{words.store}</span><select value={storeId} onChange={e=>setStoreId(e.target.value)}><option value="all">{words.all}</option>{stores.map(s=><option key={s.id} value={s.id}>{s.shop_name}</option>)}</select></label>
+  </div>
+  <DeliveryMap points={points} secondaryLines={secondaryLines} labels={labels} height={440} cluster fitKey={fitKey}
+   emptyText={words.empty}
+   legend={[{kind:'store',label:words.legendStore},{kind:'customer',label:words.legendCustomer},{kind:'captain',label:words.legendCaptain},{kind:'route',label:words.legendRoute}]}/>
+  <div className="map-legend"><span>{points.filter(p=>p.kind==='store').length} {words.stores}</span><span>{points.filter(p=>p.kind==='customer').length} {words.orders}</span><span>{liveCaptains} {words.live}</span>{staleCaptains>0&&<small>{staleCaptains} · {words.stale}</small>}<small>{points.filter(p=>p.kind==='captain').length} {words.captains}</small></div>
+ </div>;
 }
 
 function CustomerHome({t}){
@@ -638,7 +664,7 @@ function RideBooking({t,lang}){
    if(!Number.isFinite(lat)||!Number.isFinite(lng)||!form[`${which}_latitude`]||!form[`${which}_longitude`]){if(markers.current[which]){map.removeLayer(markers.current[which]);delete markers.current[which]}return;}
    const point=[lat,lng];
    if(markers.current[which]){markers.current[which].setLatLng(point);markers.current[which].setPopupContent(which==='pickup'?t.pickup:t.destination)}
-   else markers.current[which]=L.marker(point,{icon:mapMarker(which==='pickup'?'pickup':'dropoff')}).addTo(map).bindPopup(which==='pickup'?t.pickup:t.destination);
+   else markers.current[which]=L.marker(point,{icon:createMarkerIcon({kind:which==='pickup'?'pickup':'dropoff',label:which==='pickup'?t.pickup:t.destination})}).addTo(map).bindPopup(which==='pickup'?t.pickup:t.destination);
   });
   const points=['pickup','dropoff'].filter(k=>form[`${k}_latitude`]!==''&&form[`${k}_longitude`]!==''&&Number.isFinite(Number(form[`${k}_latitude`]))&&Number.isFinite(Number(form[`${k}_longitude`]))).map(k=>[Number(form[`${k}_latitude`]),Number(form[`${k}_longitude`])]);
   if(points.length===1)map.setView(points[0],15);else if(points.length===2)map.fitBounds(points,{padding:[35,35]});
@@ -701,7 +727,7 @@ function RideBooking({t,lang}){
  <button disabled={busy||!validCoordinate('pickup')||!validCoordinate('dropoff')}>{busy?t.sending:t.confirmRide}</button>
  {error&&<p className="error">{error}</p>}{notice&&<p className="success-note">{notice}</p>}
  </form></section>
- <section><h3 className="list-title"><ServiceIcon name="vespa" size="sm"/>{t.myRides}</h3><div className="order-grid">{rides.map(o=><article className="order-card" key={o.id}><b>{o.order_number} · {statusLabel(t,o.status)}</b><p>{o.pickup_address} → {o.dropoff_address}</p><p>{o.distance_km} km · {money(o.total)}</p>{o.captain_name&&<div className="order-person"><span className="mini-avatar">{o.captain_profile_image?<SafeImage src={o.captain_profile_image} alt={o.captain_name||''}/>:'◉'}</span>{o.captain_name}</div>}<RideRouteMap order={o} t={t}/></article>)}</div>{!rides.length&&<Empty t={t}/>}</section></>
+ <section><h3 className="list-title"><ServiceIcon name="vespa" size="sm"/>{t.myRides}</h3><div className="order-grid">{rides.map(o=><article className="order-card" key={o.id}><b>{o.order_number} · {statusLabel(t,o.status)}</b><p>{o.pickup_address} → {o.dropoff_address}</p><p>{o.distance_km} km · {money(o.total)}</p>{o.captain_name&&<div className="order-person"><span className="mini-avatar">{o.captain_profile_image?<SafeImage src={o.captain_profile_image} alt={o.captain_name||''}/>:'◉'}</span>{o.captain_name}</div>}<RideRouteMap order={o} t={t} role={role}/></article>)}</div>{!rides.length&&<Empty t={t}/>}</section></>
 }
 
 function Catalog({t}){
@@ -878,7 +904,7 @@ function Admin({t}){
  return <><div className="section-head"><div><h3>{t.dashboard}</h3><p>{t.overview} · {t.live}</p></div><button className="secondary" onClick={load}>{t.refresh}</button></div>{err&&<p className="error">{err}</p>}
  {summary&&<div className="stats"><Stat icon="orders" label={t.todayOrders} value={summary.orders_today}/><Stat icon="active" label={t.active} value={summary.active_orders}/><Stat icon="completed" label={t.completedToday} value={summary.completed_today}/><Stat icon="captains" label={t.captains} value={summary.online_captains}/><Stat icon="merchants" label={t.merchants} value={summary.open_merchants}/><Stat icon="sales" label={t.sales} value={money(summary.sales_today)}/><Stat icon="tickets" label={t.openTickets} value={summary.open_tickets}/></div>}
  <div className="admin-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?'primary':'secondary'} onClick={()=>setTab(id)}>{label}</button>)}</div>
- {tab==='overview'&&<><div className="dashboard-split"><section className="panel"><OrdersChart rows={data.orders} t={t}/></section><section className="panel"><StatusBreakdown rows={data.orders} t={t}/></section></div><section className="panel admin-map"><h3>{t.mapTitle}</h3><p>{t.mapNote}</p><AdminOverviewMap stores={data.stores} orders={data.orders}/></section><section className="panel"><h3>{t.ordersSection}</h3><AdminOrders rows={data.orders.slice(0,8)} t={t}/></section></>}
+ {tab==='overview'&&<><div className="dashboard-split"><section className="panel"><OrdersChart rows={data.orders} t={t}/></section><section className="panel"><StatusBreakdown rows={data.orders} t={t}/></section></div><section className="panel admin-map"><h3>{t.mapTitle}</h3><p>{t.mapNote}</p><AdminOverviewMap stores={data.stores} orders={data.orders} t={t}/></section><section className="panel"><h3>{t.ordersSection}</h3><AdminOrders rows={data.orders.slice(0,8)} t={t}/></section></>}
  {tab==='users'&&<><AdminUsers t={t}/><AccountChangeAudit t={t}/><FinanceAccessAudit t={t}/></>}{tab==='subscriptions'&&<SubscriptionManagement rows={data.subscriptions} t={t} reload={load}/>}
  {tab==='captains'&&<CaptainManagement t={t} captains={data.captains} busy={busy} update={update} reload={load}/>}
  {tab==='merchants'&&<section className="panel"><h3>{t.merchantManagement}</h3>{data.stores.length?data.stores.map(m=><article className="admin-row admin-store-row" key={m.id}><div className="admin-store-head"><SafeImage src={m.image} alt={m.shop_name||''}/><div><b>{m.shop_name}</b><small>{t.owner}: {m.owner_name} · {m.username}</small><small>{m.category} · {m.address||'—'}</small><small>{t.productsCountLabel}: {m.product_count} · {new Date(m.created_at).toLocaleDateString()}</small><span className={`tag ${m.is_open?'ready':'new'}`}>{m.is_open?t.openStore:t.storeInactive}</span></div><button className="secondary" disabled={busy===`store-${m.id}`} onClick={async()=>{setBusy(`store-${m.id}`);try{await api(`/admin/stores/${m.id}/`,{method:'PATCH',body:JSON.stringify({is_open:!m.is_open})});await load()}catch(e){setErr(e.message)}finally{setBusy('')}}}>{m.is_open?t.deactivateStore:t.activateStore}</button></div>{m.cover_image&&<SafeImage className="admin-store-cover" src={m.cover_image} alt={m.shop_name||''}/>}<div className="admin-store-products">{m.products.map(p=><div key={p.id}><SafeImage src={p.image} alt={p.name||''}/><span><b>{p.name}</b><small>{money(p.price)} · {p.available?t.availableShort:t.unavailableShort}</small></span></div>)}</div></article>):<EmptyText text={t.noMerchants}/>}</section>}
