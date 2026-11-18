@@ -33,6 +33,7 @@ from .services.order_activity import record_order_activity
 from .services.merchant_access import ALL_PERMISSIONS, PERMISSION_LABELS, merchant_access, require_merchant
 from .services.inventory import record_movement
 from .services.proofs import proof_policy, proof_complete
+from .services.admin_control import has_permission
 from .storage import WaselniMediaStorage, is_captain_document, is_private_document
 
 
@@ -41,6 +42,12 @@ def as_bool(value):
     if isinstance(value, str):
         return value.strip().lower() in ("1", "true", "yes", "on")
     return bool(value)
+
+
+def require_admin_permission(request, permission):
+    """Backend gate for every admin-only endpoint; the React tabs are cosmetic."""
+    if not has_permission(request.user, permission):
+        raise PermissionDenied("Your admin role does not allow this action.")
 
 
 def publish_order_event(order, event="order.updated"):
@@ -559,7 +566,7 @@ class MerchantViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = MerchantProfile.objects.all()
     def get_queryset(self):
         today = timezone.localdate()
-        return self.queryset.filter(is_open=True, temporarily_closed=False).filter(
+        return self.queryset.filter(approval_status="approved", is_open=True, temporarily_closed=False).filter(
             Q(user__subscription_required=False) |
             Q(user__subscriptions__status="active", user__subscriptions__starts_on__lte=today, user__subscriptions__ends_on__gte=today)
         ).distinct().order_by("shop_name")
@@ -588,8 +595,7 @@ class AdminUsersView(APIView):
     permission_classes = [IsAuthenticated]
 
     def check_admin(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only the platform administrator can manage accounts.")
+        require_admin_permission(request, "staff")
 
     def get(self, request):
         self.check_admin(request)
@@ -641,7 +647,10 @@ class AdminUsersView(APIView):
                 subscription_required=bool(data.get("subscription_required", role in ("merchant", "captain"))),
                 must_change_password=True)
             if role == "merchant":
-                MerchantProfile.objects.create(user=user, shop_name=shop_name, category="general", is_open=False)
+                MerchantProfile.objects.create(
+                    user=user, shop_name=shop_name, category="general", is_open=False,
+                    approval_status="pending",
+                )
             elif role == "captain":
                 vehicle_type = data.get("vehicle_type", "motorcycle")
                 permit_type = data.get("permit_type", "west_bank")
@@ -675,8 +684,7 @@ class AdminSubscriptionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def check_admin(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only the platform administrator can manage subscriptions.")
+        require_admin_permission(request, "finance")
 
     def get(self, request):
         self.check_admin(request)
@@ -721,8 +729,7 @@ class AdminSubscriptionsView(APIView):
 class AdminUserDetailView(APIView):
     permission_classes = [IsAuthenticated]
     def check_admin(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only the platform administrator can manage accounts.")
+        require_admin_permission(request, "staff")
     def patch(self, request, user_id):
         self.check_admin(request)
         try:
@@ -770,8 +777,7 @@ class FinanceAccessAuditView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only the platform administrator can view finance access history.")
+        require_admin_permission(request, "audit")
         rows = FinanceAccessAudit.objects.select_related("user", "changed_by")[:200]
         return Response([{
             "id": row.id,
@@ -786,8 +792,7 @@ class AdminAccountAuditView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only the platform administrator can view account change history.")
+        require_admin_permission(request, "audit")
         rows = AdminAccountAudit.objects.select_related("target", "changed_by")[:200]
         return Response([{
             "id": row.id,
@@ -804,8 +809,7 @@ class AdminAccountAuditView(APIView):
 class AdminUserSubscriptionView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request, user_id):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only the platform administrator can manage subscriptions.")
+        require_admin_permission(request, "finance")
         try: user = User.objects.get(pk=user_id)
         except User.DoesNotExist: return Response({"detail": "User not found."}, status=404)
         try:
@@ -833,8 +837,7 @@ class AdminUserSubscriptionView(APIView):
 class AdminSubscriptionPaymentView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request, subscription_id):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only the platform administrator can record payments.")
+        require_admin_permission(request, "finance")
         try: sub = Subscription.objects.get(pk=subscription_id)
         except Subscription.DoesNotExist: return Response({"detail": "Subscription not found."}, status=404)
         try: amount = Decimal(str(request.data.get("amount", "")))
@@ -1231,6 +1234,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         error = subscription_access_error(request.user)
         if error:
             raise PermissionDenied(error)
+        if not PlatformService.is_offered("ride"):
+            raise PermissionDenied("Ride booking is paused by Waselni administration.")
         data = request.data
         pickup = str(data.get("pickup_address", "")).strip()
         dropoff = str(data.get("dropoff_address", "")).strip()
@@ -2028,8 +2033,7 @@ class AdminStoresView(APIView):
     permission_classes = [IsAuthenticated]
 
     def check_admin(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only administrators can manage stores.")
+        require_admin_permission(request, "providers")
 
     def get(self, request):
         self.check_admin(request)
@@ -2072,7 +2076,7 @@ class AdminStoresView(APIView):
 class DashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser: return Response({"detail": "Admin only."}, status=403)
+        require_admin_permission(request, "dashboard")
         today = timezone.localdate()
         orders = Order.objects.filter(created_at__date=today)
         return Response({
@@ -2089,7 +2093,7 @@ class DashboardSummaryView(APIView):
 class AdminOperationsView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser: return Response({"detail": "Admin only."}, status=403)
+        require_admin_permission(request, "operations")
         captains = []
         profiles = CaptainProfile.objects.select_related("user").prefetch_related("user__subscriptions__payments").order_by("id")
         for p in profiles:
@@ -2119,7 +2123,7 @@ class AdminOperationsView(APIView):
         } for x in SupportTicket.objects.select_related("user", "order").order_by("-created_at")[:50]]
         return Response({"captains": captains, "merchants": merchants, "orders": orders, "tickets": tickets})
     def patch(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser: return Response({"detail": "Admin only."}, status=403)
+        require_admin_permission(request, "operations")
         kind, obj_id, value = request.data.get("kind"), request.data.get("id"), request.data.get("value")
         try:
             if kind == "captain":
@@ -2140,8 +2144,7 @@ class AdminCaptainApprovalView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, captain_profile_id):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only the platform administrator can approve captains.")
+        require_admin_permission(request, "captains")
         status = request.data.get("status")
         if status not in APPROVAL_STATUSES:
             raise ValidationError({"status": "Choose approved, rejected or pending."})
@@ -2375,8 +2378,7 @@ class AdminCaptainServicesView(APIView):
         })
 
     def _check(self, request):
-        if request.user.role != "admin" and not request.user.is_superuser:
-            raise PermissionDenied("Only the platform administrator can approve services.")
+        require_admin_permission(request, "captains")
 
     def _row(self, profile, service):
         row = next((item for item in profile.service_eligibilities.all() if item.service == service), None)

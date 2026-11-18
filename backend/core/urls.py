@@ -16,6 +16,15 @@ from .merchant_views import (
     MerchantHoursView, MerchantClosuresView, MerchantStoreStatusView,
     MerchantPriceHistoryView, MerchantInventoryLedgerView,
 )
+from .control_views import (
+    AdminBranchesView, AdminControlMeView, AdminPlatformSettingsView, AdminProvidersView,
+    AdminRegionDetailView, AdminRegionsView, AdminServiceDetailView, AdminServicesView,
+    AdminStaffView, ServiceCatalogView,
+)
+from .control_ops import (
+    AdminAlertsView, AdminAnalyticsView, AdminAuditLogView, AdminFinanceCenterView,
+    AdminMapView, AdminOperationsCenterView, AdminOrderDetailView, AdminSupportCenterView,
+)
 
 router = DefaultRouter()
 router.register("merchants", MerchantViewSet, basename="merchant")
@@ -64,4 +73,27 @@ urlpatterns = [
     path("", include(router.urls)),
     path("dashboard/summary/", DashboardSummaryView.as_view()),
     path("admin/operations/", AdminOperationsView.as_view()),
+    # Admin control center
+    path("services/", ServiceCatalogView.as_view()),
+    path("admin/control/me/", AdminControlMeView.as_view()),
+    path("admin/control/services/", AdminServicesView.as_view()),
+    path("admin/control/services/<int:service_id>/", AdminServiceDetailView.as_view()),
+    path("admin/control/regions/", AdminRegionsView.as_view()),
+    path("admin/control/regions/<int:region_id>/", AdminRegionDetailView.as_view()),
+    path("admin/control/providers/", AdminProvidersView.as_view()),
+    path("admin/control/providers/<int:store_id>/", AdminProvidersView.as_view()),
+    path("admin/control/branches/", AdminBranchesView.as_view()),
+    path("admin/control/branches/<int:branch_id>/", AdminBranchesView.as_view()),
+    path("admin/control/staff/", AdminStaffView.as_view()),
+    path("admin/control/staff/<int:user_id>/", AdminStaffView.as_view()),
+    path("admin/control/settings/", AdminPlatformSettingsView.as_view()),
+    path("admin/control/operations/", AdminOperationsCenterView.as_view()),
+    path("admin/control/operations/<int:order_id>/", AdminOrderDetailView.as_view()),
+    path("admin/control/map/", AdminMapView.as_view()),
+    path("admin/control/analytics/", AdminAnalyticsView.as_view()),
+    path("admin/control/finance/", AdminFinanceCenterView.as_view()),
+    path("admin/control/support/", AdminSupportCenterView.as_view()),
+    path("admin/control/support/<int:ticket_id>/", AdminSupportCenterView.as_view()),
+    path("admin/control/audit/", AdminAuditLogView.as_view()),
+    path("admin/control/alerts/", AdminAlertsView.as_view()),
 ]

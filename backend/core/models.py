@@ -31,6 +31,19 @@ class User(AbstractUser):
     ROLE_CHOICES = [(x, x.title()) for x in ["customer","merchant","captain","admin"]]
     LANGUAGE_CHOICES = [("ar","العربية"),("he","עברית"),("en","English")]
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="customer")
+    # Granular role for internal admin staff (empty for every other account).
+    ADMIN_ROLES = [
+        ("super_admin", "Super admin"),
+        ("operations", "Operations manager"),
+        ("services", "Services manager"),
+        ("merchants", "Merchants manager"),
+        ("captains", "Captains manager"),
+        ("regions", "Regions manager"),
+        ("support", "Support agent"),
+        ("finance", "Finance officer"),
+        ("review", "Review & approval officer"),
+    ]
+    admin_role = models.CharField(max_length=20, choices=ADMIN_ROLES, blank=True, default="")
     phone = models.CharField(max_length=30, blank=True)
     identity_number = models.CharField(max_length=40, unique=True, null=True, blank=True)
     is_finance_staff = models.BooleanField(default=False)
@@ -60,8 +73,22 @@ class MerchantProfile(models.Model):
     temporarily_closed = models.BooleanField(default=False)
     prep_minutes = models.PositiveSmallIntegerField(default=15)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=5)
+    APPROVAL_STATES = [("pending", "Pending"), ("approved", "Approved"), ("suspended", "Suspended"), ("rejected", "Rejected")]
+    # Existing stores trade until reviewed; admin-created stores start pending.
+    approval_status = models.CharField(max_length=12, choices=APPROVAL_STATES, default="approved")
+    rejection_reason = models.CharField(max_length=500, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="reviewed_merchants",
+    )
+    # Services this merchant is allowed to sell; empty means derive from category.
+    services = models.ManyToManyField("PlatformService", blank=True, related_name="merchants")
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return self.shop_name
+
+    @property
+    def is_approved(self):
+        return self.approval_status == "approved"
 
     @property
     def accepts_orders(self):
@@ -156,6 +183,10 @@ class MerchantBranch(models.Model):
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     opening_hours = models.CharField(max_length=120, blank=True)
     is_active = models.BooleanField(default=True)
+    region = models.ForeignKey(
+        "ServiceRegion", on_delete=models.SET_NULL, null=True, blank=True, related_name="branches",
+    )
+    services = models.ManyToManyField("PlatformService", blank=True, related_name="branches")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -542,11 +573,24 @@ class Rating(models.Model):
 
 class SupportTicket(models.Model):
     STATUSES = [("open","Open"),("in_review","In review"),("resolved","Resolved")]
+    PRIORITIES = [("low", "Low"), ("normal", "Normal"), ("high", "High")]
+    CATEGORIES = [
+        ("order", "Order issue"), ("delivery", "Delivery issue"), ("payment", "Payment issue"),
+        ("account", "Account issue"), ("merchant", "Merchant issue"), ("technology", "Technical issue"),
+        ("other", "Other"),
+    ]
     order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True, blank=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_tickets",
+    )
     subject = models.CharField(max_length=180)
     message = models.TextField()
     status = models.CharField(max_length=20, choices=STATUSES, default="open")
+    priority = models.CharField(max_length=10, choices=PRIORITIES, default="normal")
+    category = models.CharField(max_length=20, choices=CATEGORIES, default="other")
+    resolution = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -675,3 +719,148 @@ class OrderProof(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["order", "kind"], name="uniq_order_proof_kind"),
         ]
+
+
+class ServiceRegion(models.Model):
+    """A geographic operating area a service can be offered in."""
+
+    code = models.CharField(max_length=30, unique=True)
+    name_ar = models.CharField(max_length=80)
+    name_en = models.CharField(max_length=80)
+    center_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    center_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    radius_km = models.PositiveSmallIntegerField(default=15)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name_en"]
+
+    def __str__(self):
+        return self.name_en
+
+
+class PlatformService(models.Model):
+    """Administrator-owned definition of one service on the platform.
+
+    The catalogue is data, not code: a new service can be added, switched on and
+    scoped to regions from the admin console. Only ``is_operational`` services
+    are exposed to customers, because that flag means an order flow is wired.
+    """
+
+    CATEGORIES = [
+        ("food_trade", "Food & trade"),
+        ("delivery", "Delivery & transport"),
+        ("home_personal", "Home & personal services"),
+        ("gifts", "Gifts & occasions"),
+        ("travel", "Travel & bookings"),
+        ("education", "Education & specialised"),
+        ("other", "Other"),
+    ]
+    BUSINESS_TYPES = [
+        ("merchant", "Merchant"), ("captain", "Captain"), ("specialist", "Specialist"),
+        ("booking", "Booking provider"), ("platform", "Platform operated"),
+    ]
+    WORKFLOWS = [
+        ("instant", "Instant order"),
+        ("merchant_accept", "Merchant acceptance"),
+        ("provider_accept", "Provider approval"),
+        ("booking", "Scheduled booking"),
+        ("quote", "Quote request"),
+    ]
+    PRICING_MODES = [
+        ("fixed", "Fixed price"), ("distance", "Distance based"),
+        ("time", "Time based"), ("quote", "Quote"),
+    ]
+    STATUS_GROUPS = [
+        ["new", "accepted", "preparing", "ready", "assigned", "picked_up", "delivering", "awaiting_confirmation", "completed"],
+    ]
+
+    code = models.CharField(max_length=40, unique=True)
+    name_ar = models.CharField(max_length=120)
+    name_en = models.CharField(max_length=120)
+    name_he = models.CharField(max_length=120, blank=True)
+    description_ar = models.TextField(blank=True)
+    description_en = models.TextField(blank=True)
+    category = models.CharField(max_length=20, choices=CATEGORIES, default="other")
+    business_type = models.CharField(max_length=20, choices=BUSINESS_TYPES, default="merchant")
+    workflow = models.CharField(max_length=20, choices=WORKFLOWS, default="merchant_accept")
+    pricing_mode = models.CharField(max_length=20, choices=PRICING_MODES, default="fixed")
+    requires_merchant = models.BooleanField(default=True)
+    requires_captain = models.BooleanField(default=True)
+    requires_specialist = models.BooleanField(default=False)
+    requires_booking = models.BooleanField(default=False)
+    # True only while an implemented order flow exists for this code.
+    is_operational = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=False)
+    icon = models.CharField(max_length=40, blank=True)
+    image = models.ImageField(upload_to="services/", blank=True, null=True)
+    provider_requirements = models.TextField(blank=True)
+    order_flow = models.JSONField(default=list, blank=True)
+    working_hours = models.JSONField(default=list, blank=True)
+    regions = models.ManyToManyField(ServiceRegion, blank=True, related_name="services")
+    sort_order = models.PositiveSmallIntegerField(default=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "code"]
+
+    def __str__(self):
+        return self.name_en
+
+    @property
+    def display_name(self):
+        return self.name_en or self.code
+
+    @classmethod
+    def active_codes(cls):
+        return set(cls.objects.filter(is_active=True, is_operational=True).values_list("code", flat=True))
+
+    @classmethod
+    def is_offered(cls, code):
+        """False only when a configured service is switched off for customers."""
+        state = cls.objects.filter(code=code).values_list("is_active", "is_operational").first()
+        return state is None or (state[0] and state[1])
+
+
+class PlatformSettings(models.Model):
+    """Singleton operational settings; commission stays null until configured."""
+
+    default_delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    default_commission_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=8, default="ILS")
+    support_email = models.EmailField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = "platform settings"
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    @property
+    def commission_configured(self):
+        return self.default_commission_percent is not None
+
+
+class AuditLog(models.Model):
+    """Immutable record of an administrative action."""
+
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_entries",
+    )
+    actor_name = models.CharField(max_length=150)
+    action = models.CharField(max_length=60)
+    target_type = models.CharField(max_length=40)
+    target_id = models.CharField(max_length=40, blank=True)
+    summary = models.CharField(max_length=255)
+    before = models.JSONField(default=dict, blank=True)
+    after = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["target_type", "target_id"], name="audit_target")]

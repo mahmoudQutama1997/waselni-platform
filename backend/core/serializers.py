@@ -314,6 +314,10 @@ class OrderSerializer(serializers.ModelSerializer):
                 merchant = attrs.get("merchant")
                 if not merchant:
                     raise serializers.ValidationError({"merchant": "Choose an open merchant."})
+                if merchant.approval_status != "approved":
+                    raise serializers.ValidationError({"merchant": "This store is awaiting Waselni approval."})
+                if not PlatformService.is_offered(merchant.service_type):
+                    raise serializers.ValidationError({"merchant": "This service is paused by Waselni administration."})
                 from .services.merchant_access import store_open_state
                 open_now, closed_reason = store_open_state(merchant)
                 if not open_now:
@@ -407,7 +411,8 @@ class SupportTicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = SupportTicket
         fields = "__all__"
-        read_only_fields = ["user", "status", "created_at", "order_number"]
+        read_only_fields = ["user", "status", "created_at", "updated_at", "order_number",
+                            "assigned_to", "priority", "resolution"]
 
     def get_order_number(self, obj):
         return obj.order.ensure_order_number() if obj.order_id else None

@@ -159,3 +159,6 @@ Object.assign(he,{offerStart:'תחילת המבצע',offerEnd:'סיום המבצ
 Object.assign(ar,{salesToday:'مبيعات اليوم'});
 Object.assign(en,{salesToday:'Sales today'});
 Object.assign(he,{salesToday:'מכירות היום'});
+Object.assign(ar,{controlCenter:'مركز التحكم'});
+Object.assign(en,{controlCenter:'Control center'});
+Object.assign(he,{controlCenter:'מרכז השליטה'});
