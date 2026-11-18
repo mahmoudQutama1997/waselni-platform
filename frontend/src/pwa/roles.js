@@ -113,6 +113,7 @@ export const MOBILE_NAV = {
   ],
   merchant: [
     { to: '/', labelKey: 'home', icon: 'home', end: true },
+    { to: '/operations', labelKey: 'storeManagement', icon: 'store' },
     { to: '/catalog', labelKey: 'catalog', icon: 'catalog' },
     { to: '/orders', labelKey: 'orders', icon: 'orders' },
     { to: '/reports', labelKey: 'reports', icon: 'reports' },

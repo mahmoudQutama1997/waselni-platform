@@ -1733,3 +1733,88 @@ tbody tr:hover { background: #faf8fd; }
   word-break: break-word;
   white-space: pre-wrap;
 }
+
+/* ------------------------------------------------- captain services & proof */
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-block: 12px;
+}
+.service-card {
+  display: grid;
+  gap: 4px;
+  padding: 14px 12px;
+  text-align: start;
+  border-radius: 14px;
+  border: 1px solid var(--w-line, #ebe5f5);
+  background: var(--w-surface, #fff);
+  color: var(--w-ink, #29213e);
+  box-shadow: none;
+  cursor: pointer;
+}
+.service-card:hover { transform: none; filter: none; }
+.service-card strong { font-size: 13px; }
+.service-card small { color: var(--w-muted, #837b96); font-size: 11px; }
+.service-card-icon { font-size: 20px; line-height: 1; }
+.service-card.is-approved { border-color: #d5c6ef; background: #faf7ff; }
+.service-card.is-accepting { box-shadow: inset 0 0 0 2px #7a45cf; }
+.service-card.is-locked, .service-card.is-suspended { opacity: .62; cursor: not-allowed; }
+.schedule-row {
+  display: grid;
+  grid-template-columns: 1.2fr .8fr .8fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--w-line, #ebe5f5);
+}
+.hours-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 110px 110px;
+  gap: 8px 10px;
+  align-items: center;
+  margin-block: 12px;
+}
+.plain-list { margin: 8px 0 0; padding-inline-start: 18px; color: var(--w-muted, #837b96); font-size: 13px; }
+.service-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--w-purple-soft, #efe8fb);
+  color: #5b2ea6;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.card-top-tags { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.promo-fields { border-top: 1px dashed var(--w-line, #ebe5f5); padding-top: 10px; }
+.is-positive { color: #177a4f; font-weight: 700; }
+.is-negative { color: #a62c3a; font-weight: 700; }
+
+/* ------------------------------------------------------------------- modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(33, 16, 51, .55);
+  backdrop-filter: blur(3px);
+}
+.modal-card {
+  width: min(520px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 22px;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 30px 80px rgba(22, 7, 47, .35);
+}
+.modal-card .section-head { margin-bottom: 12px; }
+
+@media (max-width: 720px) {
+  .schedule-row { grid-template-columns: 1fr 1fr; }
+  .hours-grid { grid-template-columns: 1fr 1fr; }
+  .service-grid { grid-template-columns: 1fr 1fr; }
+}

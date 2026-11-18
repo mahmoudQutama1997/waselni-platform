@@ -25,12 +25,15 @@ from .serializers import *
 from .services.eligibility import (
     subscription_state, classify_subscription, evaluate_captain, legacy_fields, enforce_online_invariant,
     eligible_captain_user_ids, order_compatibility_reasons, set_approval, APPROVAL_STATUSES,
-    approval_status,
+    approval_status, active_task_count, service_eligibility, is_within_working_hours,
 )
 from .validators import validate_document_upload, validate_image_upload
 from .services.order_completion import complete_order
 from .services.order_activity import record_order_activity
-from .storage import WaselniMediaStorage, is_captain_document
+from .services.merchant_access import ALL_PERMISSIONS, PERMISSION_LABELS, merchant_access, require_merchant
+from .services.inventory import record_movement
+from .services.proofs import proof_policy, proof_complete
+from .storage import WaselniMediaStorage, is_captain_document, is_private_document
 
 
 def as_bool(value):
@@ -183,7 +186,7 @@ class StockUnavailable(Exception):
         self.shortfalls = shortfalls
 
 
-def reserve_stock(items):
+def reserve_stock(items, order=None, actor=None):
     """Reserve every requested line with conditional updates (safe under concurrency).
 
     A row is decremented only while the stored count still covers it, so two
@@ -191,6 +194,7 @@ def reserve_stock(items):
     count cannot be sold at all: an unset count must never mean "sell anything",
     otherwise the merchant's stock ceiling is not real. Raises StockUnavailable
     so the caller's transaction rolls back earlier rows of the same order.
+    Every accepted line also writes one InventoryMovement row.
     """
     shortfalls = []
     for row in items or []:
@@ -212,6 +216,13 @@ def reserve_stock(items):
                 "requested": quantity,
                 "reason": "untracked" if product and product.quantity is None else "shortage",
             })
+            continue
+        product = Product.objects.filter(pk=product_id).only("id", "name", "quantity").first()
+        if product is not None:
+            record_movement(
+                product, -quantity, "order", actor=actor, order=order,
+                before=(product.quantity or 0) + quantity, after=product.quantity,
+            )
     if shortfalls:
         raise StockUnavailable(shortfalls)
 
@@ -237,6 +248,12 @@ def restore_order_stock(order):
     }
     for product_id, quantity in restored.items():
         Product.objects.filter(pk=product_id).update(quantity=F("quantity") + quantity)
+        product = Product.objects.filter(pk=product_id).only("id", "name", "quantity").first()
+        if product is not None:
+            record_movement(
+                product, quantity, "cancel", order=order,
+                before=(product.quantity or 0) - quantity, after=product.quantity,
+            )
     order.stock_restored_at = timezone.now()
     if restored:
         after = list(Product.objects.select_related("merchant").filter(pk__in=restored))
@@ -542,7 +559,7 @@ class MerchantViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = MerchantProfile.objects.all()
     def get_queryset(self):
         today = timezone.localdate()
-        return self.queryset.filter(is_open=True).filter(
+        return self.queryset.filter(is_open=True, temporarily_closed=False).filter(
             Q(user__subscription_required=False) |
             Q(user__subscriptions__status="active", user__subscriptions__starts_on__lte=today, user__subscriptions__ends_on__gte=today)
         ).distinct().order_by("shop_name")
@@ -641,6 +658,12 @@ class AdminUsersView(APIView):
                     checkpoint_badge=bool(data.get("checkpoint_badge", False)),
                     license_verified=False, insurance_verified=False,
                 )
+                # Every service starts pending: the administrator must approve
+                # each one independently before the captain can execute it.
+                CaptainServiceEligibility.objects.bulk_create([
+                    CaptainServiceEligibility(captain=profile, service=code, status="pending")
+                    for code in SERVICE_CODES
+                ])
         return Response({"id": user.id, "username": user.username, "identity_number": identity,
                          "temporary_password": raw_password, "role": user.role,
                          "subscription_required": user.subscription_required,
@@ -854,6 +877,58 @@ def captain_status_row(profile, elig):
     }
 
 
+def captain_metrics(profile):
+    """Derived performance figures and earnings for one captain.
+
+    Earnings are the order delivery fee recorded on each completed order. The
+    platform has no configured commission rate, so no commission is invented;
+    cash collected is the product value the captain actually settled.
+    """
+    from django.db.models import Count
+    orders = Order.objects.filter(captain=profile)
+    completed = orders.filter(status="completed")
+    assigned_total = orders.exclude(captain_accepted_at__isnull=True).count()
+    progressed = orders.filter(status__in=("picked_up", "delivering", "awaiting_confirmation", "completed")).count()
+    cancelled = orders.filter(status="cancelled").count()
+    finished = completed.count()
+    durations = [
+        (row.completed_at - row.captain_accepted_at).total_seconds() / 60
+        for row in completed.filter(captain_accepted_at__isnull=False, completed_at__isnull=False)
+        .only("completed_at", "captain_accepted_at")
+    ]
+    today = timezone.localdate()
+    week_start = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+
+    def earnings(since=None, until=None):
+        qs = completed
+        if since:
+            qs = qs.filter(completed_at__date__gte=since)
+        if until:
+            qs = qs.filter(completed_at__date__lte=until)
+        total = qs.aggregate(value=Sum("delivery_fee"))["value"] or Decimal("0.00")
+        return {"amount": str(total), "tasks": qs.count()}
+
+    settlements = CashSettlement.objects.filter(captain=profile, order__status="completed")
+    cash_collected = settlements.aggregate(value=Sum("amount"))["value"] or Decimal("0.00")
+    return {
+        "completed_tasks": finished,
+        "cancelled_tasks": cancelled,
+        "cancellation_rate": round(cancelled / (finished + cancelled) * 100, 1) if (finished + cancelled) else 0,
+        "acceptance_rate": round(progressed / assigned_total * 100, 1) if assigned_total else 0,
+        "average_completion_minutes": round(sum(durations) / len(durations), 1) if durations else None,
+        "earnings": {
+            "today": earnings(today, today),
+            "week": earnings(week_start, today),
+            "month": earnings(month_start, today),
+            "cash_collected": str(cash_collected),
+            "note": "Earnings are the delivery fee of completed tasks; no commission rule is configured.",
+        },
+        "max_active_tasks": profile.max_active_tasks,
+        "active_tasks": active_task_count(profile),
+    }
+
+
 class CaptainSelfView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -868,7 +943,19 @@ class CaptainSelfView(APIView):
     def get(self, request):
         p = self.get_profile(request)
         elig = enforce_online_invariant(p)
-        return Response(captain_status_row(p, elig))
+        data = captain_status_row(p, elig)
+        data.update(captain_metrics(p))
+        data["working_windows"] = CaptainWorkingWindowSerializer(
+            p.working_windows.all(), many=True
+        ).data
+        data["service_options"] = [
+            {"service": code, "label": label, "status": row.status if row else "none",
+             "accepting": row.accepting if row else False, "active": row.is_active if row else False,
+             "regions": row.regions if row else []}
+            for code, label in SERVICE_CHOICES
+            for row in [next((r for r in p.service_eligibilities.all() if r.service == code), None)]
+        ]
+        return Response(data)
 
     def patch(self, request):
         p = self.get_profile(request)
@@ -918,41 +1005,76 @@ class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     permission_classes = [IsAuthenticated]
     queryset = Product.objects.select_related("merchant").all()
+
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.request.user.role == "merchant":
-            return qs.filter(merchant__user=self.request.user)
-        qs = qs.filter(available=True, merchant__is_open=True)
+        user = self.request.user
+        if user.role == "merchant":
+            access = merchant_access(user)
+            if access is None:
+                return qs.none()
+            return qs.filter(merchant=access.merchant)
+        qs = qs.filter(available=True, merchant__is_open=True, merchant__temporarily_closed=False)
         merchant_id = self.request.query_params.get("merchant")
         return qs.filter(merchant_id=merchant_id) if merchant_id else qs
+
+    def _require(self, permission):
+        access = merchant_access(self.request.user)
+        if access is None or not access.can(permission):
+            raise PermissionDenied("Your staff role does not allow this action.")
+        return access
+
     def perform_create(self, serializer):
-        if self.request.user.role != "merchant":
-            raise PermissionDenied("Only merchants can add products.")
-        profile = MerchantProfile.objects.get(user=self.request.user)
-        serializer.save(merchant=profile)
+        access = self._require("inventory")
+        product = serializer.save(merchant=access.merchant)
+        quantity = product.quantity or 0
+        if quantity:
+            record_movement(product, quantity, "restock", actor=self.request.user,
+                            before=0, after=quantity, note="Initial stock")
+
     def perform_update(self, serializer):
-        if self.request.user.role != "merchant": raise PermissionDenied("Only merchants can edit products.")
-        previous = serializer.instance.quantity
+        access = self._require("inventory")
+        data = self.request.data
+        if ("price" in data or "discount_price" in data) and not access.can("prices"):
+            raise PermissionDenied("Your staff role cannot change prices.")
+        instance = serializer.instance
+        old_price, old_discount, previous_quantity = instance.price, instance.discount_price, instance.quantity
         product = serializer.save()
-        if product.quantity != previous:
-            publish_stock_events({product.id: previous}, [product], "manual")
+        if product.price != old_price or product.discount_price != old_discount:
+            PriceChange.objects.create(
+                product=product, changed_by=self.request.user,
+                old_price=old_price, new_price=product.price,
+                old_discount=old_discount, new_discount=product.discount_price,
+                reason=str(data.get("price_reason", ""))[:200],
+            )
+        if product.quantity != previous_quantity:
+            before = 0 if previous_quantity is None else previous_quantity
+            after = 0 if product.quantity is None else product.quantity
+            record_movement(product, after - before, "manual", actor=self.request.user,
+                            before=before, after=after, note="Product edit")
+            publish_stock_events({product.id: previous_quantity}, [product], "manual")
+
     def perform_destroy(self, instance):
-        if self.request.user.role != "merchant": raise PermissionDenied("Only merchants can delete products.")
+        self._require("inventory")
         instance.delete()
+
     @action(detail=True, methods=["post"])
     def stock(self, request, pk=None):
         """Adjust tracked stock by a delta under a row lock so taps cannot be lost."""
-        if request.user.role != "merchant":
-            raise PermissionDenied("Only merchants can change stock.")
+        access = self._require("inventory")
         try:
             delta = int(request.data.get("delta"))
         except (TypeError, ValueError):
             return Response({"detail": "delta must be an integer."}, status=400)
         if delta == 0:
             return Response({"detail": "delta must not be zero."}, status=400)
+        reason = str(request.data.get("reason", "manual"))
+        if reason not in ("manual", "restock", "correction"):
+            reason = "manual"
+        note = str(request.data.get("note", ""))[:255]
         with transaction.atomic():
             product = (Product.objects.select_for_update().select_related("merchant")
-                       .filter(pk=pk, merchant__user=request.user).first())
+                       .filter(pk=pk, merchant=access.merchant).first())
             if product is None:
                 raise NotFound("Product not found.")
             # An unset count starts at zero: the first tap turns tracking on
@@ -960,9 +1082,25 @@ class ProductViewSet(viewsets.ModelViewSet):
             previous = 0 if product.quantity is None else product.quantity
             product.quantity = max(0, min(previous + delta, 1000000))
             product.save(update_fields=["quantity"])
+            record_movement(product, product.quantity - previous, reason,
+                            actor=request.user, before=previous, after=product.quantity, note=note)
         notify_stock_changes({product.id: previous}, [product])
-        publish_stock_events({product.id: previous}, [product], "manual")
+        publish_stock_events({product.id: previous}, [product], reason)
         return Response(self.get_serializer(product).data)
+
+    @action(detail=False, methods=["get"], url_path="movements")
+    def movements(self, request):
+        """Immutable stock ledger for the merchant, newest first."""
+        access = merchant_access(request.user)
+        if access is None:
+            raise PermissionDenied("Merchant account required.")
+        qs = InventoryMovement.objects.select_related("product", "order", "actor").filter(
+            product__merchant=access.merchant
+        )
+        product_id = request.query_params.get("product")
+        if product_id:
+            qs = qs.filter(product_id=product_id)
+        return Response(InventoryMovementSerializer(qs[:200], many=True).data)
 
 class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
@@ -977,7 +1115,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         if u.role == "admin":
             queryset = self.queryset
         elif u.role == "merchant":
-            queryset = self.queryset.filter(merchant__user=u)
+            access = merchant_access(u)
+            queryset = self.queryset.filter(merchant=access.merchant) if access else self.queryset.none()
         elif u.role == "captain":
             queryset = self.queryset.filter(captain__user=u)
         else:
@@ -1018,7 +1157,6 @@ class OrderViewSet(viewsets.ModelViewSet):
                     if duplicate:
                         transaction.set_rollback(True)
                 if not duplicate:
-                    reserve_stock(items)
                     if request_key:
                         order, created = Order.objects.get_or_create(
                             customer=request.user, request_key=request_key,
@@ -1031,6 +1169,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                         order = serializer.save(customer=request.user)
                         created = True
                     if created:
+                        # Reservation and its ledger rows share the order
+                        # transaction, so a shortage rolls both back together.
+                        reserve_stock(items, order=order, actor=request.user)
+                        if proof_policy(order)["otp_required"]:
+                            order.ensure_delivery_otp()
                         record_order_activity(
                             order, "created", actor=request.user, to_status=order.status,
                         )
@@ -1066,6 +1209,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             captain = request.user.captain_profile
         except CaptainProfile.DoesNotExist:
             return Response([])
+        # Prefetch the dispatch rules once instead of per candidate order.
+        captain = CaptainProfile.objects.prefetch_related(
+            "service_eligibilities", "working_windows"
+        ).get(pk=captain.pk)
         # Ineligible or offline captains see no dispatchable orders; the captain
         # dashboard shows the exact reason from the same eligibility result.
         # Orders already assigned to the captain stay visible so an in-progress
@@ -1135,6 +1282,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             distance_km=Decimal(str(distance)).quantize(Decimal("0.01")), delivery_fee=fee,
             checkpoint_fee=checkpoint_fee, total=total, requires_checkpoint=checkpoint,
             payment_method=data.get("payment_method", "cash") if data.get("payment_method") in ("cash", "online") else "cash")
+        order_defaults["service_type"] = "ride"
         with transaction.atomic():
             if request_key:
                 order, created = Order.objects.get_or_create(
@@ -1227,8 +1375,13 @@ class OrderViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             order = Order.objects.select_for_update(of=("self",)).select_related("merchant__user", "captain__user", "customer").get(pk=pk)
             role = request.user.role
-            if role == "merchant" and (not order.merchant or order.merchant.user_id != request.user.id):
-                raise PermissionDenied("This order does not belong to your store.")
+            if role == "merchant":
+                access = merchant_access(request.user)
+                if access is None or not order.merchant or access.merchant.id != order.merchant_id:
+                    raise PermissionDenied("This order does not belong to your store.")
+                needed = "preparation" if new_status in ("preparing", "ready") else "orders"
+                if not access.can(needed):
+                    raise PermissionDenied("Your staff role does not allow this order action.")
             if role == "captain" and (not order.captain or order.captain.user_id != request.user.id):
                 raise PermissionDenied("This order is not assigned to you.")
             if role == "customer" and order.customer_id != request.user.id:
@@ -1238,6 +1391,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             previous_status = order.status
             if new_status == "picked_up" and order.order_type == "store" and not order.merchant_arrived_at:
                 return Response({"detail": "Report arrival at the merchant before confirming pickup."}, status=400)
+            if new_status == "awaiting_confirmation" and proof_policy(order)["photo_required"] and not proof_complete(order):
+                return Response({"detail": "Record the required delivery proof before completing this task."}, status=400)
             # Cash handover is reconciled after successful delivery. It must never
             # block the captain from starting the trip.
             order.status = new_status
@@ -1308,6 +1463,126 @@ class OrderViewSet(viewsets.ModelViewSet):
         publish_order_event(order)
         notify_order_event(order, "order.assigned", exclude={request.user.id}, payload={"status": "assigned"})
         return Response(self.get_serializer(order).data)
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        """Merchant rejects a new/accepted order with a mandatory reason."""
+        if request.user.role not in ("merchant", "admin"):
+            raise PermissionDenied("Only the store or the administration can reject an order.")
+        reason = str(request.data.get("reason", "")).strip()
+        if not reason:
+            raise ValidationError({"reason": "A rejection reason is required."})
+        if len(reason) > 500:
+            raise ValidationError({"reason": "The reason must be 500 characters or fewer."})
+        with transaction.atomic():
+            order = Order.objects.select_for_update(of=("self",)).select_related(
+                "merchant", "captain__user", "customer"
+            ).get(pk=pk)
+            if request.user.role == "merchant":
+                access = merchant_access(request.user)
+                if access is None or not order.merchant or access.merchant.id != order.merchant_id:
+                    raise PermissionDenied("This order does not belong to your store.")
+                if not access.can("orders"):
+                    raise PermissionDenied("Your staff role cannot reject orders.")
+            if order.status not in ("new", "accepted"):
+                return Response({"detail": "Only new or accepted orders can be rejected."}, status=409)
+            previous_status = order.status
+            order.status = "cancelled"
+            order.cancellation_reason = reason
+            restore_order_stock(order)
+            order.save()
+            record_order_activity(
+                order, "rejected", actor=request.user,
+                from_status=previous_status, to_status=order.status,
+            )
+        publish_order_event(order, "order.cancelled")
+        notify_order_event(order, "order.rejected", exclude={request.user.id},
+                           payload={"status": "cancelled", "reason": reason})
+        return Response(self.get_serializer(order).data)
+
+    @action(detail=True, methods=["post"])
+    def proof(self, request, pk=None):
+        """Record pickup/delivery proof for the captain's own task."""
+        if request.user.role != "captain":
+            raise PermissionDenied("Captain account required.")
+        kind = str(request.data.get("kind", "delivery")).strip()
+        if kind not in ("pickup", "delivery"):
+            raise ValidationError({"kind": "Choose pickup or delivery."})
+        with transaction.atomic():
+            order = Order.objects.select_for_update(of=("self",)).select_related("captain__user").get(pk=pk)
+            if not order.captain or order.captain.user_id != request.user.id:
+                raise PermissionDenied("This order is not assigned to you.")
+            if order.status in ("completed", "cancelled"):
+                return Response({"detail": "This order is closed."}, status=409)
+            existing = OrderProof.objects.filter(order=order, kind=kind).first()
+            photo = validate_image_upload(request.FILES.get("photo"), field="photo") if request.FILES.get("photo") else None
+            if photo is None and existing is not None:
+                photo = existing.photo
+            policy = proof_policy(order)
+            otp_verified = bool(existing and existing.otp_verified)
+            code = str(request.data.get("otp", "")).strip()
+            if kind == "delivery" and policy["otp_required"] and order.delivery_otp:
+                if code != order.delivery_otp:
+                    return Response({"detail": "The delivery code is incorrect."}, status=400)
+                otp_verified = True
+            recipient = str(request.data.get("recipient_name", "")).strip()[:150]
+            if kind == "delivery" and policy["recipient_required"] and not recipient:
+                raise ValidationError({"recipient_name": "Enter the recipient name for this service."})
+            if kind == "delivery" and policy["photo_required"] and not photo:
+                raise ValidationError({"photo": "A delivery photo is required for this service."})
+            proof, _ = OrderProof.objects.update_or_create(
+                order=order, kind=kind,
+                defaults={
+                    "photo": photo,
+                    "recipient_name": recipient,
+                    "notes": str(request.data.get("notes", "")).strip()[:500],
+                    "otp_verified": otp_verified,
+                    "captured_by": request.user,
+                },
+            )
+            if otp_verified and not order.delivery_otp_verified_at:
+                order.delivery_otp_verified_at = timezone.now()
+                order.save(update_fields=["delivery_otp_verified_at", "updated_at"])
+            record_order_activity(
+                order,
+                "pickup_proof" if kind == "pickup" else "delivery_proof",
+                actor=request.user, from_status=order.status, to_status=order.status,
+            )
+        publish_order_event(order)
+        return Response(OrderProofSerializer(proof).data, status=201)
+
+    @action(detail=True, methods=["get"], url_path=r"proofs/(?P<kind>[a-z]+)/photo")
+    def proof_photo(self, request, pk=None, kind=None):
+        """Serve a proof photo only to the parties involved in the order."""
+        try:
+            order = Order.objects.select_related("merchant", "captain__user").get(pk=pk)
+        except Order.DoesNotExist:
+            raise NotFound("Order not found.")
+        user = request.user
+        access = merchant_access(user) if user.role == "merchant" else None
+        allowed = (
+            user.role == "admin"
+            or order.customer_id == user.id
+            or (order.captain_id and order.captain.user_id == user.id)
+            or (access is not None and order.merchant_id == access.merchant.id)
+        )
+        if not allowed:
+            raise PermissionDenied("You are not allowed to access this proof.")
+        proof = OrderProof.objects.filter(order=order, kind=kind).first()
+        if proof is None or not proof.photo:
+            raise NotFound("Proof not found.")
+        storage = proof.photo.storage
+        try:
+            if isinstance(storage, WaselniMediaStorage) and storage.is_remote_private_document(proof.photo.name):
+                handle = storage.private_document_handle(proof.photo.name)
+            else:
+                handle = proof.photo.open("rb")
+        except (FileNotFoundError, OSError, ValueError, SuspiciousFileOperation):
+            raise NotFound("Proof not found.")
+        response = FileResponse(handle, as_attachment=False, filename=os.path.basename(proof.photo.name))
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
 
 
 class RatingViewSet(viewsets.ModelViewSet):
@@ -1386,7 +1661,9 @@ class SettlementViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         u = self.request.user
         if u.role == "admin" or u.is_finance_staff or u.is_superuser: return self.queryset
-        if u.role == "merchant": return self.queryset.filter(merchant__user=u)
+        if u.role == "merchant":
+            access = merchant_access(u)
+            return self.queryset.filter(merchant=access.merchant) if access else self.queryset.none()
         if u.role == "captain": return self.queryset.filter(captain__user=u)
         return self.queryset.none()
     http_method_names = ["get", "post", "head", "options"]
@@ -1419,7 +1696,10 @@ class SettlementViewSet(viewsets.ModelViewSet):
             order__order_type="store",
         )
         if request.user.role == "merchant":
-            qs = qs.filter(merchant__user=request.user)
+            access = merchant_access(request.user)
+            if access is None or not access.can("reports"):
+                raise PermissionDenied("Your staff role cannot view settlements.")
+            qs = qs.filter(merchant=access.merchant)
         elif request.user.role == "captain":
             qs = qs.filter(captain__user=request.user)
         elif not self._is_finance_admin(request.user):
@@ -1450,7 +1730,11 @@ class SettlementViewSet(viewsets.ModelViewSet):
         if request.user.role == "captain":
             receipts = receipts.filter(captain__user=request.user)
         elif request.user.role == "merchant":
-            receipts = receipts.filter(allocations__settlement__merchant__user=request.user).distinct()
+            access = merchant_access(request.user)
+            if access is None:
+                receipts = receipts.none()
+            else:
+                receipts = receipts.filter(allocations__settlement__merchant=access.merchant).distinct()
         else:
             receipts = receipts.order_by("-created_at")
         serialized_receipts = [self._receipt_data(receipt) for receipt in receipts[:200]]
@@ -1702,10 +1986,10 @@ class MerchantReportsView(APIView):
     def get(self, request):
         if request.user.role != "merchant":
             raise PermissionDenied("Merchant account required.")
-        try:
-            merchant = request.user.merchant_profile
-        except MerchantProfile.DoesNotExist:
-            raise NotFound("Store profile not found.")
+        access = merchant_access(request.user)
+        if access is None or not access.can("reports"):
+            raise PermissionDenied("Your staff role cannot view reports.")
+        merchant = access.merchant
         today = timezone.localdate()
         orders = Order.objects.filter(merchant=merchant)
         today_orders = orders.filter(created_at__date=today)
@@ -1888,3 +2172,220 @@ class AdminCaptainApprovalView(APIView):
         publish_captain_eligibility(profile.user)
         profile.refresh_from_db()
         return Response({"ok": True, **captain_status_row(profile, evaluate_captain(profile.user, profile))})
+
+
+# ---------------------------------------------------------------------------
+# Captain: services, weekly schedule and earnings
+# ---------------------------------------------------------------------------
+class CaptainScheduleView(APIView):
+    """The captain's own weekly working windows (replace-all on PUT)."""
+    permission_classes = [IsAuthenticated]
+
+    def get_profile(self, request):
+        if request.user.role != "captain":
+            raise PermissionDenied("Captain account required.")
+        try:
+            return request.user.captain_profile
+        except CaptainProfile.DoesNotExist:
+            raise PermissionDenied("Captain profile not found.")
+
+    def get(self, request):
+        profile = self.get_profile(request)
+        return Response({
+            "windows": CaptainWorkingWindowSerializer(profile.working_windows.all(), many=True).data,
+            "available_now": is_within_working_hours(profile),
+            "uses_default_schedule": not profile.working_windows.exists(),
+        })
+
+    def put(self, request):
+        profile = self.get_profile(request)
+        rows = request.data.get("windows")
+        if not isinstance(rows, list) or len(rows) > 40:
+            raise ValidationError({"windows": "Send a list of at most 40 windows."})
+        serializer = CaptainWorkingWindowSerializer(data=rows, many=True)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            profile.working_windows.all().delete()
+            CaptainWorkingWindow.objects.bulk_create([
+                CaptainWorkingWindow(captain=profile, **row)
+                for row in serializer.validated_data
+            ])
+        publish_captain_eligibility(profile.user)
+        return self.get(request)
+
+
+class CaptainServicePreferenceView(APIView):
+    """A captain may only toggle services an administrator already approved."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role != "captain":
+            raise PermissionDenied("Captain account required.")
+        try:
+            profile = request.user.captain_profile
+        except CaptainProfile.DoesNotExist:
+            raise PermissionDenied("Captain profile not found.")
+        rows = request.data.get("services")
+        if not isinstance(rows, list) or not rows:
+            raise ValidationError({"services": "Send at least one service preference."})
+        updated = []
+        with transaction.atomic():
+            for row in rows:
+                service = str(row.get("service", "")).strip()
+                if service not in SERVICE_CODES:
+                    raise ValidationError({"service": f"Unknown service: {service}"})
+                eligibility = CaptainServiceEligibility.objects.select_for_update().filter(
+                    captain=profile, service=service
+                ).first()
+                if eligibility is None:
+                    raise PermissionDenied(f"You are not approved for {service}.")
+                if "accepting" in row:
+                    eligibility.accepting = as_bool(row["accepting"])
+                if "regions" in row:
+                    regions = row["regions"]
+                    if not isinstance(regions, list) or len(regions) > 10:
+                        raise ValidationError({"regions": "Send at most 10 regions."})
+                    allowed = eligibility.regions or []
+                    chosen = [str(value).strip()[:40] for value in regions if str(value).strip()]
+                    if allowed:
+                        chosen = [value for value in chosen if value in allowed]
+                    eligibility.regions = chosen
+                eligibility.save(update_fields=["accepting", "regions", "updated_at"])
+                updated.append(eligibility)
+        publish_captain_eligibility(profile.user)
+        return Response({
+            "services": CaptainServiceEligibilitySerializer(updated, many=True).data,
+            "eligibility": evaluate_captain(profile.user, profile),
+        })
+
+
+class CaptainEarningsView(APIView):
+    """Earnings and settlement ledger for the authenticated captain."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != "captain":
+            raise PermissionDenied("Captain account required.")
+        try:
+            profile = request.user.captain_profile
+        except CaptainProfile.DoesNotExist:
+            raise PermissionDenied("Captain profile not found.")
+        metrics = captain_metrics(profile)
+        rows = []
+        settlements = CashSettlement.objects.filter(captain=profile).select_related(
+            "order", "merchant"
+        ).prefetch_related("allocations").order_by("-created_at")[:100]
+        for settlement in settlements:
+            allocated = sum((row.amount for row in settlement.allocations.all()), Decimal("0.00"))
+            settled = min(settlement.amount, max(allocated, settlement.amount if settlement.closed else Decimal("0.00")))
+            rows.append({
+                "id": settlement.id,
+                "order_number": settlement.order.ensure_order_number(),
+                "merchant_name": settlement.merchant.shop_name,
+                "amount": str(settlement.amount),
+                "settled_amount": str(settled),
+                "outstanding_amount": str(max(settlement.amount - settled, Decimal("0.00"))),
+                "status": "settled" if settled >= settlement.amount else "partial" if settled > 0 else "outstanding",
+                "created_at": settlement.created_at.isoformat(),
+            })
+        completed = Order.objects.filter(captain=profile, status="completed").select_related("merchant").order_by("-completed_at")[:100]
+        return Response({
+            **metrics["earnings"],
+            "completed_tasks": metrics["completed_tasks"],
+            "average_completion_minutes": metrics["average_completion_minutes"],
+            "settlements": rows,
+            "outstanding_total": str(sum((Decimal(row["outstanding_amount"]) for row in rows), Decimal("0.00"))),
+            "tasks": [{
+                "order_number": order.ensure_order_number(),
+                "service_type": order.resolved_service(),
+                "delivery_fee": str(order.delivery_fee),
+                "completed_at": order.completed_at.isoformat() if order.completed_at else None,
+                "merchant_name": order.merchant.shop_name if order.merchant else None,
+            } for order in completed],
+        })
+
+
+class AdminCaptainServicesView(APIView):
+    """Administrator approval for one captain and one service (independent rows)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, captain_profile_id):
+        self._check(request)
+        try:
+            profile = CaptainProfile.objects.get(pk=captain_profile_id)
+        except CaptainProfile.DoesNotExist:
+            raise NotFound("Captain profile not found.")
+        return Response({
+            "captain_profile_id": profile.id,
+            "max_active_tasks": profile.max_active_tasks,
+            "services": [
+                {"service": code, "label": label,
+                 **self._row(profile, code)}
+                for code, label in SERVICE_CHOICES
+            ],
+        })
+
+    def post(self, request, captain_profile_id):
+        self._check(request)
+        service = str(request.data.get("service", "")).strip()
+        if service not in SERVICE_CODES:
+            raise ValidationError({"service": "Choose a valid service."})
+        status = str(request.data.get("status", "pending")).strip()
+        if status not in dict(CaptainServiceEligibility.STATUSES):
+            raise ValidationError({"status": "Choose pending, approved or suspended."})
+        with transaction.atomic():
+            profile = CaptainProfile.objects.select_for_update().select_related("user").filter(
+                pk=captain_profile_id
+            ).first()
+            if profile is None:
+                raise NotFound("Captain profile not found.")
+            row, _ = CaptainServiceEligibility.objects.select_for_update().get_or_create(
+                captain=profile, service=service
+            )
+            row.status = status
+            if status == "approved":
+                row.approved_by = request.user
+                row.approved_at = timezone.now()
+            for field in ("training_required", "training_completed", "document_verified"):
+                if field in request.data:
+                    setattr(row, field, as_bool(request.data[field]))
+            if "regions" in request.data:
+                regions = request.data["regions"]
+                if not isinstance(regions, list) or len(regions) > 10:
+                    raise ValidationError({"regions": "Send at most 10 regions."})
+                row.regions = [str(value).strip()[:40] for value in regions if str(value).strip()]
+            if "notes" in request.data:
+                row.notes = str(request.data["notes"]).strip()[:500]
+            row.save()
+            if "max_active_tasks" in request.data:
+                try:
+                    limit = int(request.data["max_active_tasks"])
+                except (TypeError, ValueError):
+                    raise ValidationError({"max_active_tasks": "Enter a whole number."})
+                if not 1 <= limit <= 10:
+                    raise ValidationError({"max_active_tasks": "Choose between 1 and 10 active tasks."})
+                profile.max_active_tasks = limit
+                profile.save(update_fields=["max_active_tasks"])
+            publish_captain_eligibility(profile.user)
+        return Response({
+            "service": service,
+            "status": row.status,
+            "eligibility": evaluate_captain(profile.user, profile),
+            "max_active_tasks": profile.max_active_tasks,
+        })
+
+    def _check(self, request):
+        if request.user.role != "admin" and not request.user.is_superuser:
+            raise PermissionDenied("Only the platform administrator can approve services.")
+
+    def _row(self, profile, service):
+        row = next((item for item in profile.service_eligibilities.all() if item.service == service), None)
+        if row is None:
+            return {"status": "none", "accepting": False, "active": False, "regions": [],
+                    "training_required": False, "training_completed": False, "document_verified": False}
+        return {
+            "status": row.status, "accepting": row.accepting, "active": row.is_active,
+            "regions": row.regions, "training_required": row.training_required,
+            "training_completed": row.training_completed, "document_verified": row.document_verified,
+        }
+

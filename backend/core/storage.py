@@ -31,6 +31,7 @@ from django.core.files.storage import FileSystemStorage, Storage
 logger = logging.getLogger("waselni.storage")
 
 CAPTAIN_DOCUMENTS_FOLDER = "captain_documents"
+ORDER_PROOFS_FOLDER = "order_proofs"
 DEFAULT_UPLOAD_API = "https://upload.imagekit.io/api/v1/files/upload"
 DEFAULT_MEDIA_API = "https://api.imagekit.io/v1"
 DEFAULT_PRIVATE_URL_TTL = 300
@@ -50,6 +51,18 @@ def is_captain_document(name):
     normalised = _posix(name)
     segments = [segment for segment in posixpath.normpath(normalised).split("/") if segment and segment != "."]
     return any(segment.rstrip(" .").casefold() == CAPTAIN_DOCUMENTS_FOLDER for segment in segments)
+
+
+def is_order_proof(name):
+    """True when any path segment is the private order proof folder."""
+    normalised = _posix(name)
+    segments = [segment for segment in posixpath.normpath(normalised).split("/") if segment and segment != "."]
+    return any(segment.rstrip(" .").casefold() == ORDER_PROOFS_FOLDER for segment in segments)
+
+
+def is_private_document(name):
+    """Documents the platform may only serve through an authorised endpoint."""
+    return is_captain_document(name) or is_order_proof(name)
 
 
 def imagekit_config():
@@ -267,11 +280,15 @@ class WaselniMediaStorage(Storage):
     def _is_remote(self, name):
         """A name is remote when ImageKit is ready, the path is public and no
         legacy local file already exists under MEDIA_ROOT."""
-        return bool(self._config()) and not is_captain_document(name) and not self._local.exists(name)
+        return bool(self._config()) and not is_private_document(name) and not self._local.exists(name)
 
     def is_remote_captain_document(self, name):
         """True when a captain document lives on ImageKit rather than disk."""
         return bool(self._config()) and is_captain_document(name) and not self._local.exists(name)
+
+    def is_remote_private_document(self, name):
+        """True when any private document (captain file or proof) is remote."""
+        return bool(self._config()) and is_private_document(name) and not self._local.exists(name)
 
     def get_available_name(self, name, max_length=None):
         if self._config():
@@ -286,7 +303,7 @@ class WaselniMediaStorage(Storage):
         if not config:
             return self._local._save(name, ContentFile(data, name=name))
         unique = _unique_name(name)
-        private = is_captain_document(unique)
+        private = is_private_document(unique)
         try:
             return upload_to_imagekit(unique, data, config, private=private)
         except ImageKitError:
@@ -311,7 +328,7 @@ class WaselniMediaStorage(Storage):
         cannot leak through the API response or browser history.
         """
         config = self._config()
-        if not config or not is_captain_document(name):
+        if not config or not is_private_document(name):
             raise FileNotFoundError("No private remote document is available.")
         request = Request(signed_private_url(name, config, expires_in))
         try:
@@ -340,7 +357,7 @@ class WaselniMediaStorage(Storage):
         except ImageKitError:
             logger.warning("ImageKit delete failed; remote file left in place: %s", name, exc_info=True)
             return
-        if not is_captain_document(name):
+        if not is_private_document(name):
             try:
                 purge_imagekit_url(str(name), config)
             except ImageKitError:

@@ -36,6 +36,12 @@ class OrderCompletionAndCashLedgerTests(TestCase):
         )
         self.merchant = MerchantProfile.objects.create(user=self.merchant_user, shop_name="Lifecycle Store")
         self.captain = CaptainProfile.objects.create(user=self.captain_user, approved=True)
+        # This suite covers the order lifecycle; approve the food service so the
+        # dispatch list keeps working while service gating is tested elsewhere.
+        from .models import CaptainServiceEligibility
+        CaptainServiceEligibility.objects.create(
+            captain=self.captain, service="food", status="approved"
+        )
         self.client = APIClient()
 
     def make_order(self, *, status="delivering", order_type="store", payment_method="cash", subtotal="40.00"):

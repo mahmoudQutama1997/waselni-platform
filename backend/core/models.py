@@ -6,6 +6,27 @@ from django.contrib.auth.models import AbstractUser
 from django.conf import settings
 from django.utils import timezone
 
+# Captain service catalogue. Each service is independently approved per captain.
+SERVICE_CHOICES = [
+    ("food", "Food delivery"),
+    ("grocery", "Grocery & supermarket"),
+    ("pharmacy", "Pharmacy"),
+    ("parcel", "Parcels & documents"),
+    ("ride", "Vespa rides"),
+    ("logistics", "Special logistics"),
+]
+SERVICE_CODES = [code for code, _ in SERVICE_CHOICES]
+
+# Merchant categories map to the service a captain must be approved for.
+MERCHANT_CATEGORY_SERVICE = {
+    "supermarket": "grocery",
+    "grocery": "grocery",
+    "pharmacy": "pharmacy",
+    "restaurant": "food",
+    "food": "food",
+}
+
+
 class User(AbstractUser):
     ROLE_CHOICES = [(x, x.title()) for x in ["customer","merchant","captain","admin"]]
     LANGUAGE_CHOICES = [("ar","العربية"),("he","עברית"),("en","English")]
@@ -35,9 +56,20 @@ class MerchantProfile(models.Model):
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     opening_hours = models.CharField(max_length=120, blank=True)
     is_open = models.BooleanField(default=True)
+    # Pausing new orders without closing the store permanently.
+    temporarily_closed = models.BooleanField(default=False)
+    prep_minutes = models.PositiveSmallIntegerField(default=15)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=5)
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return self.shop_name
+
+    @property
+    def accepts_orders(self):
+        return self.is_open and not self.temporarily_closed
+
+    @property
+    def service_type(self):
+        return MERCHANT_CATEGORY_SERVICE.get((self.category or "").strip().lower(), "food")
 
 class CaptainProfile(models.Model):
     VEHICLES = [("car","Car"),("motorcycle","Motorcycle"),("truck","Truck")]
@@ -61,6 +93,134 @@ class CaptainProfile(models.Model):
     current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     current_location_updated_at = models.DateTimeField(null=True, blank=True)
+    # Dispatch capacity: how many tasks may be active at the same time.
+    max_active_tasks = models.PositiveSmallIntegerField(default=1)
+
+
+class CaptainServiceEligibility(models.Model):
+    """Administrator-controlled approval for one captain and one service.
+
+    ``status`` is the platform decision; ``accepting`` is the captain's own
+    preference within the approved services. A missing row means the captain is
+    not eligible for that service at all.
+    """
+    STATUSES = [("pending", "Pending"), ("approved", "Approved"), ("suspended", "Suspended")]
+    captain = models.ForeignKey(CaptainProfile, on_delete=models.CASCADE, related_name="service_eligibilities")
+    service = models.CharField(max_length=20, choices=SERVICE_CHOICES)
+    status = models.CharField(max_length=12, choices=STATUSES, default="pending")
+    accepting = models.BooleanField(default=True)
+    regions = models.JSONField(default=list, blank=True)
+    training_required = models.BooleanField(default=False)
+    training_completed = models.BooleanField(default=False)
+    document_verified = models.BooleanField(default=False)
+    notes = models.CharField(max_length=500, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["service"]
+        constraints = [
+            models.UniqueConstraint(fields=["captain", "service"], name="uniq_captain_service"),
+        ]
+
+    @property
+    def is_active(self):
+        return self.status == "approved" and (not self.training_required or self.training_completed)
+
+
+class CaptainWorkingWindow(models.Model):
+    """Recurring weekly availability window; a break is a window flagged ``is_break``."""
+    captain = models.ForeignKey(CaptainProfile, on_delete=models.CASCADE, related_name="working_windows")
+    weekday = models.PositiveSmallIntegerField()  # 0 = Monday … 6 = Sunday
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    is_break = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["weekday", "start_time"]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(weekday__gte=0, weekday__lte=6), name="captain_window_weekday"),
+        ]
+
+
+class MerchantBranch(models.Model):
+    """One physical branch of a merchant. Legacy stores keep a single default branch."""
+    merchant = models.ForeignKey(MerchantProfile, on_delete=models.CASCADE, related_name="branches")
+    name = models.CharField(max_length=160)
+    address = models.CharField(max_length=255, blank=True)
+    phone = models.CharField(max_length=30, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    opening_hours = models.CharField(max_length=120, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.merchant.shop_name} · {self.name}"
+
+
+class MerchantStaff(models.Model):
+    """A non-owner employee of one merchant with a scoped role."""
+    ROLES = [
+        ("manager", "Manager"),
+        ("orders", "Order desk"),
+        ("preparation", "Preparation"),
+        ("inventory", "Inventory"),
+        ("reports", "Reports"),
+    ]
+    merchant = models.ForeignKey(MerchantProfile, on_delete=models.CASCADE, related_name="staff")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="merchant_staff_roles")
+    role = models.CharField(max_length=20, choices=ROLES, default="orders")
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(fields=["merchant", "user"], name="uniq_merchant_staff"),
+            models.UniqueConstraint(fields=["user"], name="uniq_staff_single_merchant"),
+        ]
+
+
+class MerchantHours(models.Model):
+    """Weekly opening hours for a merchant or one of its branches (branch wins)."""
+    merchant = models.ForeignKey(MerchantProfile, on_delete=models.CASCADE, related_name="business_hours")
+    branch = models.ForeignKey(MerchantBranch, on_delete=models.CASCADE, null=True, blank=True, related_name="business_hours")
+    weekday = models.PositiveSmallIntegerField()
+    opens_at = models.TimeField(null=True, blank=True)
+    closes_at = models.TimeField(null=True, blank=True)
+    is_closed = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["weekday"]
+        constraints = [
+            models.UniqueConstraint(fields=["merchant", "branch", "weekday"], name="uniq_merchant_branch_weekday"),
+        ]
+
+
+class StoreClosure(models.Model):
+    """A dated exception (holiday, maintenance) that closes the store for that day."""
+    merchant = models.ForeignKey(MerchantProfile, on_delete=models.CASCADE, related_name="closures")
+    branch = models.ForeignKey(MerchantBranch, on_delete=models.CASCADE, null=True, blank=True, related_name="closures")
+    date = models.DateField()
+    reason = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["date"]
+        constraints = [
+            models.UniqueConstraint(fields=["merchant", "branch", "date"], name="uniq_store_closure_day"),
+        ]
+
 
 class Product(models.Model):
     merchant = models.ForeignKey(MerchantProfile, on_delete=models.CASCADE, related_name="products")
@@ -74,8 +234,28 @@ class Product(models.Model):
     # the available flag alone. New products are created with an explicit count.
     quantity = models.PositiveIntegerField(null=True, blank=True)
     low_stock_threshold = models.PositiveIntegerField(default=5)
+    # Time-boxed promotion. The server is the only authority on the price the
+    # customer is charged; the client displays ``effective_price``.
+    discount_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    discount_starts_at = models.DateTimeField(null=True, blank=True)
+    discount_ends_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return self.name
+
+    @property
+    def discount_active(self):
+        if self.discount_price is None:
+            return False
+        now = timezone.now()
+        if self.discount_starts_at and self.discount_starts_at > now:
+            return False
+        if self.discount_ends_at and self.discount_ends_at < now:
+            return False
+        return self.discount_price < self.price
+
+    @property
+    def effective_price(self):
+        return self.discount_price if self.discount_active else self.price
 
     @property
     def stock_status(self):
@@ -102,6 +282,11 @@ class Order(models.Model):
     merchant = models.ForeignKey(MerchantProfile, on_delete=models.PROTECT, null=True, blank=True, related_name="orders")
     captain = models.ForeignKey(CaptainProfile, on_delete=models.PROTECT, null=True, blank=True, related_name="orders")
     order_type = models.CharField(max_length=20, choices=TYPES, default="store")
+    # Service needed to execute this order; drives captain dispatch eligibility.
+    service_type = models.CharField(max_length=20, choices=SERVICE_CHOICES, blank=True, default="")
+    branch = models.ForeignKey(
+        "MerchantBranch", on_delete=models.SET_NULL, null=True, blank=True, related_name="orders",
+    )
     REQUIRED_VEHICLES = [("any", "Any vehicle"), ("car", "Car"), ("motorcycle", "Motorcycle"), ("truck", "Truck")]
     required_vehicle = models.CharField(max_length=20, choices=REQUIRED_VEHICLES, default="any")
     status = models.CharField(max_length=24, choices=STATUSES, default="new")
@@ -136,6 +321,10 @@ class Order(models.Model):
     request_key = models.CharField(max_length=64, null=True, blank=True)
     # Set exactly once when a cancelled order returns its reserved stock.
     stock_restored_at = models.DateTimeField(null=True, blank=True)
+    cancellation_reason = models.CharField(max_length=500, blank=True)
+    # Proof of fulfilment. The OTP is only ever returned to the customer.
+    delivery_otp = models.CharField(max_length=6, blank=True)
+    delivery_otp_verified_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -214,6 +403,28 @@ class Order(models.Model):
                 "order_number", flat=True
             ).first()
         return self.order_number
+
+    def resolved_service(self):
+        """Service needed to execute this order, derived for legacy rows."""
+        if self.service_type:
+            return self.service_type
+        if self.order_type == "ride":
+            return "ride"
+        if self.order_type == "parcel":
+            return "parcel"
+        if self.merchant_id:
+            return self.merchant.service_type
+        return "food"
+
+    def ensure_delivery_otp(self):
+        """Create a delivery OTP once; it is delivered to the customer only."""
+        import secrets as _secrets
+        if self.delivery_otp:
+            return self.delivery_otp
+        code = f"{_secrets.randbelow(900000) + 100000}"
+        type(self).objects.filter(pk=self.pk, delivery_otp="").update(delivery_otp=code)
+        self.delivery_otp = code
+        return code
 
 
 class OrderActivity(models.Model):
@@ -395,3 +606,72 @@ class SubscriptionPayment(models.Model):
 
     class Meta:
         ordering = ["-paid_at"]
+
+
+class InventoryMovement(models.Model):
+    """Immutable audit row for every stock change.
+
+    The partial unique constraint makes the order reservation idempotent: a
+    retried request can never deduct the same product for the same order twice.
+    """
+    REASONS = [
+        ("manual", "Manual adjustment"),
+        ("restock", "Restock"),
+        ("order", "Order reserved"),
+        ("cancel", "Order cancelled"),
+        ("correction", "Correction"),
+    ]
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="movements")
+    order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True, blank=True, related_name="inventory_movements")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="inventory_movements")
+    delta = models.IntegerField()
+    quantity_before = models.IntegerField(null=True, blank=True)
+    quantity_after = models.IntegerField(null=True, blank=True)
+    reason = models.CharField(max_length=16, choices=REASONS)
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["product", "-created_at"], name="inventory_product_time")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["order", "product", "reason"],
+                condition=models.Q(reason="order"),
+                name="uniq_order_stock_deduction",
+            ),
+        ]
+
+
+class PriceChange(models.Model):
+    """Audit trail for price and promotion edits, required for merchant reports."""
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="price_changes")
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="price_changes")
+    old_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    new_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    old_discount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    new_discount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    reason = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+
+class OrderProof(models.Model):
+    """Immutable fulfilment proof (pickup or delivery) for one order."""
+    KINDS = [("pickup", "Pickup"), ("delivery", "Delivery")]
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="proofs")
+    kind = models.CharField(max_length=10, choices=KINDS)
+    photo = models.ImageField(upload_to="order_proofs/", blank=True, null=True)
+    recipient_name = models.CharField(max_length=150, blank=True)
+    notes = models.CharField(max_length=500, blank=True)
+    otp_verified = models.BooleanField(default=False)
+    captured_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="order_proofs")
+    captured_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["captured_at", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["order", "kind"], name="uniq_order_proof_kind"),
+        ]

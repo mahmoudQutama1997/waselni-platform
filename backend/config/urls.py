@@ -13,6 +13,7 @@ from core.auth_views import (
     PasswordResetConfirmView,
 )
 
+PRIVATE_MEDIA_PREFIXES = ("captain_documents", "order_proofs")
 CAPTAIN_DOCUMENTS_PREFIX = "captain_documents"
 
 
@@ -26,18 +27,21 @@ def _path_segments(path):
 def _is_private_segment(segment):
     # Windows ignores trailing dots and some APIs strip trailing spaces, so
     # "captain_documents." must be treated like "captain_documents" there.
-    return segment.rstrip(" .").casefold() == CAPTAIN_DOCUMENTS_PREFIX
+    return segment.rstrip(" .").casefold() in PRIVATE_MEDIA_PREFIXES
 
 
 def _resolves_into_captain_documents(path):
     # Aliases such as the Windows 8.3 short name never appear in the textual
     # path, so resolve the location on disk and compare it with the private
-    # folder as well.
+    # folders as well.
     try:
         media_root = os.path.realpath(settings.MEDIA_ROOT)
-        private_root = os.path.realpath(os.path.join(media_root, CAPTAIN_DOCUMENTS_PREFIX))
         target = os.path.realpath(os.path.join(media_root, *str(path or "").replace("\\", "/").split("/")))
-        return os.path.commonpath([target, private_root]) == private_root
+        for prefix in PRIVATE_MEDIA_PREFIXES:
+            private_root = os.path.realpath(os.path.join(media_root, prefix))
+            if os.path.commonpath([target, private_root]) == private_root:
+                return True
+        return False
     except (OSError, ValueError):
         return False
 

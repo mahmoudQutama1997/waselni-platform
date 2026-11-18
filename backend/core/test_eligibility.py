@@ -14,7 +14,10 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .consumers import OrderEventsConsumer
-from .models import CaptainProfile, Order, Subscription, SubscriptionPayment
+from .models import (
+    CaptainProfile, CaptainServiceEligibility, Order, SERVICE_CODES, Subscription,
+    SubscriptionPayment,
+)
 from .services.eligibility import (
     classify_subscription, enforce_online_invariant, eligible_captain_user_ids,
     evaluate_captain, order_compatibility_reasons, set_approval, subscription_state,
@@ -33,6 +36,12 @@ def make_captain(username="cap", approved=True, rejected=False, online=False, re
     profile = CaptainProfile.objects.create(user=user, approved=approved, rejected=rejected, online=online,
                                             vehicle_type=vehicle, checkpoint_badge=badge,
                                             vehicle_model=model, plate_number=plate)
+    # These tests cover account/vehicle/checkpoint rules, not service gating:
+    # grant every service so dispatch behaviour stays comparable to before.
+    CaptainServiceEligibility.objects.bulk_create([
+        CaptainServiceEligibility(captain=profile, service=code, status="approved")
+        for code in SERVICE_CODES
+    ])
     spans = {
         "active": (TODAY - timedelta(days=2), TODAY + timedelta(days=20), "active"),
         "expired": (TODAY - timedelta(days=40), TODAY - timedelta(days=1), "active"),
