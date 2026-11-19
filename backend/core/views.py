@@ -566,10 +566,23 @@ class MerchantViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = MerchantProfile.objects.all()
     def get_queryset(self):
         today = timezone.localdate()
-        return self.queryset.filter(approval_status="approved", is_open=True, temporarily_closed=False).filter(
+        qs = self.queryset.filter(approval_status="approved", is_open=True, temporarily_closed=False).filter(
             Q(user__subscription_required=False) |
             Q(user__subscriptions__status="active", user__subscriptions__starts_on__lte=today, user__subscriptions__ends_on__gte=today)
-        ).distinct().order_by("shop_name")
+        )
+        service = self.request.query_params.get("service", "").strip()
+        if service:
+            categories = {
+                "food": ("food", "restaurant"),
+                "grocery": ("grocery", "supermarket"),
+                "pharmacy": ("pharmacy",),
+            }
+            if service not in categories:
+                return qs.none()
+            qs = qs.filter(
+                Q(services__code=service) | Q(category__in=categories[service])
+            )
+        return qs.distinct().order_by("shop_name")
 
 def subscription_access_error(user):
     """Enforce the same subscription state exposed to captain and admin APIs."""
@@ -1017,9 +1030,37 @@ class ProductViewSet(viewsets.ModelViewSet):
             if access is None:
                 return qs.none()
             return qs.filter(merchant=access.merchant)
-        qs = qs.filter(available=True, merchant__is_open=True, merchant__temporarily_closed=False)
+        today = timezone.localdate()
+        qs = qs.filter(
+            available=True,
+            merchant__approval_status="approved",
+            merchant__is_open=True,
+            merchant__temporarily_closed=False,
+        ).filter(
+            Q(merchant__user__subscription_required=False) |
+            Q(merchant__user__subscriptions__status="active",
+              merchant__user__subscriptions__starts_on__lte=today,
+              merchant__user__subscriptions__ends_on__gte=today)
+        )
         merchant_id = self.request.query_params.get("merchant")
-        return qs.filter(merchant_id=merchant_id) if merchant_id else qs
+        if merchant_id:
+            qs = qs.filter(merchant_id=merchant_id)
+        service = self.request.query_params.get("service", "").strip()
+        if service:
+            if service not in ("food", "grocery", "pharmacy"):
+                return qs.none()
+            qs = qs.filter(Q(merchant__services__code=service) | Q(merchant__category__in={
+                "food": ("food", "restaurant"),
+                "grocery": ("grocery", "supermarket"),
+                "pharmacy": ("pharmacy",),
+            }[service]))
+        if service == "pharmacy" or (merchant_id and MerchantProfile.objects.filter(pk=merchant_id, category="pharmacy").exists()):
+            qs = qs.filter(
+                pharmacy_review_status="approved",
+                prescription_required=False,
+                controlled_substance=False,
+            )
+        return qs.distinct()
 
     def _require(self, permission):
         access = merchant_access(self.request.user)
@@ -1043,6 +1084,14 @@ class ProductViewSet(viewsets.ModelViewSet):
         instance = serializer.instance
         old_price, old_discount, previous_quantity = instance.price, instance.discount_price, instance.quantity
         product = serializer.save()
+        pharmacy_product = (
+            instance.merchant.category == "pharmacy"
+            or instance.merchant.services.filter(code="pharmacy").exists()
+        )
+        review_fields = {"name", "category", "description", "prescription_required", "controlled_substance"}
+        if pharmacy_product and review_fields.intersection(data.keys()):
+            product.pharmacy_review_status = "pending"
+            product.save(update_fields=["pharmacy_review_status"])
         if product.price != old_price or product.discount_price != old_discount:
             PriceChange.objects.create(
                 product=product, changed_by=self.request.user,
@@ -1104,6 +1153,130 @@ class ProductViewSet(viewsets.ModelViewSet):
         if product_id:
             qs = qs.filter(product_id=product_id)
         return Response(InventoryMovementSerializer(qs[:200], many=True).data)
+
+class CustomerDeliveryRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _coordinate(self, data, name, minimum, maximum):
+        try:
+            value = Decimal(str(data.get(name)))
+        except (TypeError, ValueError, InvalidOperation):
+            raise ValidationError({name: "Select a valid location."})
+        if not value.is_finite() or value < minimum or value > maximum:
+            raise ValidationError({name: "Location is outside the valid range."})
+        return value.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+
+    def _distance(self, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng):
+        radius = 6371.0
+        lat1, lat2 = math.radians(float(pickup_lat)), math.radians(float(dropoff_lat))
+        dlat = lat2 - lat1
+        dlng = math.radians(float(dropoff_lng - pickup_lng))
+        haversine = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
+        return max(0.5, 2 * radius * math.asin(min(1, math.sqrt(haversine))) * 1.25)
+
+    def _base_data(self, request, service):
+        if request.user.role != "customer":
+            raise PermissionDenied("Only customers can request this service.")
+        error = subscription_access_error(request.user)
+        if error:
+            raise PermissionDenied(error)
+        if not PlatformService.is_offered(service):
+            raise PermissionDenied("This service is paused by Waselni administration.")
+        data = request.data
+        pickup = str(data.get("pickup_address", "")).strip()[:255]
+        dropoff = str(data.get("dropoff_address", "")).strip()[:255]
+        if not pickup or not dropoff:
+            raise ValidationError({"addresses": "Enter both pickup and destination addresses."})
+        plat = self._coordinate(data, "pickup_latitude", Decimal("-90"), Decimal("90"))
+        plon = self._coordinate(data, "pickup_longitude", Decimal("-180"), Decimal("180"))
+        dlat = self._coordinate(data, "dropoff_latitude", Decimal("-90"), Decimal("90"))
+        dlon = self._coordinate(data, "dropoff_longitude", Decimal("-180"), Decimal("180"))
+        distance = Decimal(str(self._distance(plat, plon, dlat, dlon))).quantize(Decimal("0.01"))
+        return data, pickup, dropoff, plat, plon, dlat, dlon, distance
+
+    def post(self, request, service):
+        if service not in ("parcel", "logistics"):
+            raise NotFound("Delivery service not found.")
+        data, pickup, dropoff, plat, plon, dlat, dlon, distance = self._base_data(request, service)
+        details = {
+            "service": service,
+            "package_type": str(data.get("package_type", "parcel")).strip()[:40],
+            "weight_kg": str(data.get("weight_kg", "")).strip()[:20],
+            "dimensions": str(data.get("dimensions", "")).strip()[:80],
+            "notes": str(data.get("notes", "")).strip()[:1000],
+        }
+        try:
+            weight = Decimal(details["weight_kg"] or "0")
+        except InvalidOperation:
+            raise ValidationError({"weight_kg": "Enter a valid weight."})
+        if not weight.is_finite() or weight < 0 or weight > 1000:
+            raise ValidationError({"weight_kg": "Weight must be between 0 and 1000 kg."})
+        details["weight_kg"] = str(weight)
+        request_key = request.headers.get("Idempotency-Key", "").strip()[:64]
+        if service == "parcel":
+            recipient_name = str(data.get("recipient_name", "")).strip()[:150]
+            recipient_phone = str(data.get("recipient_phone", "")).strip()[:30]
+            if not recipient_name or not recipient_phone:
+                raise ValidationError({"recipient": "Recipient name and phone are required."})
+            base = Decimal(os.getenv("PARCEL_BASE_FARE", "5.00"))
+            per_km = Decimal(os.getenv("PARCEL_PRICE_PER_KM", "2.00"))
+            per_kg = Decimal(os.getenv("PARCEL_PRICE_PER_KG", "0.50"))
+            fee = (base + distance * per_km + weight * per_kg).quantize(Decimal("0.01"))
+            if fee > Decimal("500.00"):
+                raise ValidationError({"weight_kg": "This shipment requires a special quote."})
+            details.update({
+                "recipient_name": recipient_name,
+                "recipient_phone": recipient_phone,
+                "quote_status": "not_required",
+            })
+            status = "ready"
+        else:
+            try:
+                piece_count = int(data.get("piece_count") or 1)
+            except (TypeError, ValueError):
+                raise ValidationError({"piece_count": "Enter a whole number."})
+            details.update({
+                "sender_name": str(data.get("sender_name", "")).strip()[:150],
+                "sender_phone": str(data.get("sender_phone", "")).strip()[:30],
+                "recipient_name": str(data.get("recipient_name", "")).strip()[:150],
+                "recipient_phone": str(data.get("recipient_phone", "")).strip()[:30],
+                "piece_count": max(1, min(100, piece_count)),
+                "quote_status": "requested",
+            })
+            if not all(details[key] for key in ("sender_name", "sender_phone", "recipient_name", "recipient_phone")):
+                raise ValidationError({"contacts": "Sender and recipient names and phone numbers are required."})
+            fee = Decimal("0.00")
+            status = "new"
+        defaults = dict(
+            order_type="parcel", service_type=service, status=status,
+            pickup_address=pickup, dropoff_address=dropoff,
+            pickup_latitude=plat, pickup_longitude=plon,
+            dropoff_latitude=dlat, dropoff_longitude=dlon,
+            distance_km=distance, delivery_fee=fee, total=fee,
+            items=[], service_details=details,
+        )
+        with transaction.atomic():
+            if request_key:
+                order, created = Order.objects.get_or_create(
+                    customer=request.user, request_key=request_key, defaults=defaults,
+                )
+            else:
+                order = Order.objects.create(customer=request.user, **defaults)
+                created = True
+            if created:
+                if service == "parcel":
+                    order.ensure_delivery_otp()
+                record_order_activity(order, "created", actor=request.user, to_status=order.status)
+        if created:
+            publish_order_event(order, "order.created")
+            if service == "parcel":
+                notify_user_ids(eligible_captain_user_ids(order), "order.available", order=order,
+                                payload={"status": "ready", "order_type": "parcel"})
+            else:
+                notify_user_ids(admin_user_ids(), "order.created", order=order,
+                                payload={"status": "new", "order_type": "parcel", "service_type": "logistics"})
+        return Response(OrderSerializer(order, context={"request": request}).data, status=201 if created else 200)
+
 
 class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
@@ -1304,6 +1477,45 @@ class OrderViewSet(viewsets.ModelViewSet):
             publish_order_event(order, "order.created")
             notify_order_created(order)
         return Response(self.get_serializer(order).data, status=201 if created else 200)
+
+    @action(detail=True, methods=["post"])
+    def quote(self, request, pk=None):
+        """Operations offers a logistics quote; only the customer can accept it."""
+        with transaction.atomic():
+            order = Order.objects.select_for_update().get(pk=pk)
+            if order.service_type != "logistics" or order.order_type != "parcel":
+                raise ValidationError("Quotes are only available for special logistics requests.")
+            details = dict(order.service_details or {})
+            if request.user.role == "admin":
+                try:
+                    amount = Decimal(str(request.data.get("amount"))).quantize(Decimal("0.01"))
+                except (InvalidOperation, TypeError, ValueError):
+                    raise ValidationError({"amount": "Enter a valid quote amount."})
+                if not amount.is_finite() or amount <= 0 or amount > Decimal("10000.00"):
+                    raise ValidationError({"amount": "Quote amount must be between 0.01 and 10000.00."})
+                if order.status != "new" or details.get("quote_status") != "requested":
+                    raise ValidationError("This request is not waiting for a quote.")
+                details.update({"quote_status": "offered", "quoted_amount": str(amount)})
+                order.delivery_fee = amount
+                order.total = amount
+                event = "quote.offered"
+            elif request.user.role == "customer" and order.customer_id == request.user.id:
+                if request.data.get("accept") is not True or details.get("quote_status") != "offered":
+                    raise ValidationError("Accept the current quote to dispatch this shipment.")
+                details["quote_status"] = "accepted"
+                order.status = "ready"
+                order.ensure_delivery_otp()
+                event = "quote.accepted"
+            else:
+                raise PermissionDenied("Only operations can offer a quote and only its customer can accept it.")
+            order.service_details = details
+            order.save(update_fields=["service_details", "delivery_fee", "total", "status", "updated_at"])
+            record_order_activity(order, event, actor=request.user, from_status="new", to_status=order.status)
+        publish_order_event(order, "order.updated")
+        if event == "quote.accepted":
+            notify_user_ids(eligible_captain_user_ids(order), "order.available", order=order,
+                            payload={"status": "ready", "order_type": "parcel"})
+        return Response(self.get_serializer(order).data)
 
     @action(detail=False, methods=["get"])
     def tracking(self, request):

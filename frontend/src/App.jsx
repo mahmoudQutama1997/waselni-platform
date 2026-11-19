@@ -191,7 +191,7 @@ function App(){
  {role!=='admin'&&<NavLink to="/support"><NavIcon name="support"/>{t.support}</NavLink>}
  </nav><div className="side-bottom"><select value={lang} onChange={e=>setLang(e.target.value)} aria-label={t.language}><option value="ar">العربية</option><option value="he">עברית</option><option value="en">English</option></select><button className="ghost" onClick={signOut}>{t.logout}</button></div></aside>
  <main className="content"><header><div className="header-title"><span className="eyebrow">{t.platform.toUpperCase()} · {t[role]||role}</span><h2>{t[titleKey]||t.home}</h2>{subtitle&&<p className="header-subtitle">{subtitle}</p>}</div><div className="header-actions"><NotificationCenter lang={lang} role={role}/><span className={`status-pill ${online?'':'is-offline'}`} title={online?t.online:t.offline}>{online?t.online:t.offline}</span></div></header>
- <ErrorBoundary lang={lang} resetKey={location.pathname}><Routes><Route path="/" element={<Home role={role} t={t} lang={lang}/>}/><Route path="/orders" element={<Orders role={role} t={t}/>}/><Route path="/ride" element={role==='customer'?<RideBooking t={t} lang={lang} role={role}/>:<Navigate to="/"/>}/><Route path="/catalog" element={role==='merchant'?<Catalog t={t}/>:<Navigate to="/"/>}/><Route path="/operations" element={role==='merchant'?<MerchantOperations t={t} lang={lang}/>:<Navigate to="/"/>}/><Route path="/reports" element={<Reports t={t}/>}/><Route path="/account" element={<AccountProfile t={t} me={me} setMe={setMe} onSignOut={signOut} lang={lang}/>}/><Route path="/profile" element={role==='merchant'?<Profile t={t}/>:<Navigate to="/account"/>}/><Route path="/captain" element={<Captain t={t} lang={lang}/>}/><Route path="/settlements" element={<Settlements t={t} role={role} canManageFinance={role==='admin'||!!me.is_finance_staff}/>}/><Route path="/admin" element={role==='admin'?<AdminControlCenter lang={lang}/>:<Navigate to="/"/>}/><Route path="/admin/:section" element={role==='admin'?<AdminControlCenter lang={lang}/>:<Navigate to="/"/>}/><Route path="/admin/legacy" element={role==='admin'?<Admin t={t}/>:<Navigate to="/"/>}/><Route path="/support" element={<Support t={t}/>}/><Route path="*" element={<Navigate to="/"/>}/></Routes></ErrorBoundary>
+ <ErrorBoundary lang={lang} resetKey={location.pathname}><Routes><Route path="/" element={<Home role={role} t={t} lang={lang}/>}/><Route path="/orders" element={<Orders role={role} t={t}/>}/><Route path="/service/:code" element={role==='customer'?<CustomerServicePage t={t} lang={lang}/>:<Navigate to="/"/>}/><Route path="/ride" element={role==='customer'?<RideBooking t={t} lang={lang} role={role}/>:<Navigate to="/"/>}/><Route path="/catalog" element={role==='merchant'?<Catalog t={t}/>:<Navigate to="/"/>}/><Route path="/operations" element={role==='merchant'?<MerchantOperations t={t} lang={lang}/>:<Navigate to="/"/>}/><Route path="/reports" element={<Reports t={t}/>}/><Route path="/account" element={<AccountProfile t={t} me={me} setMe={setMe} onSignOut={signOut} lang={lang}/>}/><Route path="/profile" element={role==='merchant'?<Profile t={t}/>:<Navigate to="/account"/>}/><Route path="/captain" element={<Captain t={t} lang={lang}/>}/><Route path="/settlements" element={<Settlements t={t} role={role} canManageFinance={role==='admin'||!!me.is_finance_staff}/>}/><Route path="/admin" element={role==='admin'?<AdminControlCenter lang={lang}/>:<Navigate to="/"/>}/><Route path="/admin/:section" element={role==='admin'?<AdminControlCenter lang={lang}/>:<Navigate to="/"/>}/><Route path="/admin/legacy" element={role==='admin'?<Admin t={t}/>:<Navigate to="/"/>}/><Route path="/support" element={<Support t={t}/>}/><Route path="*" element={<Navigate to="/"/>}/></Routes></ErrorBoundary>
  </main><MobileNav role={role} t={t} isFinanceStaff={!!me.is_finance_staff}/></div>
 }
 
@@ -405,6 +405,7 @@ function Orders({role,t}){
  const [query,setQuery]=useState('');
  const [statusFilter,setStatusFilter]=useState('all');
  const [busy,setBusy]=useState(null);
+ const [quoteAmounts,setQuoteAmounts]=useState({});
  const [proofOrder,setProofOrder]=useState(null);
  useEffect(()=>{const id=setInterval(()=>setClock(Date.now()),1000);return()=>clearInterval(id)},[]);
  const searchTerm=query.trim().toLowerCase();
@@ -442,6 +443,8 @@ function Orders({role,t}){
    <div className="order-times"><small>{t.createdAt}: {o.created_at?new Date(o.created_at).toLocaleString():'—'}</small><small>{t.updatedAt}: {o.updated_at?new Date(o.updated_at).toLocaleString():'—'}</small></div>
    <h3 className="order-title"><ServiceIcon size="sm" name={o.order_type==='ride'?'vespa':o.order_type==='parcel'?'truck':'store'}/>{o.order_type==='ride'?t.rideService:o.order_type==='parcel'?(t.shipping||t.orders):(o.merchant_name||o.order_type)}</h3>
    <OrderProgress order={o} t={t}/>
+   {role==='admin'&&o.service_type==='logistics'&&o.service_details?.quote_status==='requested'&&<div className="actions"><input type="number" min="0.01" step="0.01" value={quoteAmounts[o.id]||''} placeholder={t.quoteAmount||'Quote amount'} onChange={event=>setQuoteAmounts(current=>({...current,[o.id]:event.target.value}))}/><button disabled={busy===o.id} onClick={()=>{const amount=Number(quoteAmounts[o.id]);if(Number.isFinite(amount)&&amount>0)act(`/orders/${o.id}/quote/`,{amount:quoteAmounts[o.id]},o.id)}}>{t.offerQuote||'Offer quote'}</button></div>}
+   {o.service_details?.quote_status&&<p className="note">{o.service_details.quote_status==='requested'?(t.quoteRequested||'Quote requested'):o.service_details.quote_status==='offered'?(t.quoteOffered||'Quote offered'):o.service_details.quote_status==='accepted'?(t.quoteAccepted||'Quote accepted'):''}</p>}
    {o.completed_at&&<p className="note">{t.completedAt}: {new Date(o.completed_at).toLocaleString()}</p>}
    <div className="order-person"><span className="mini-avatar">{o.customer_profile_image?<SafeImage src={o.customer_profile_image} alt={o.customer_name||''}/>:<span>◉</span>}</span><p>{t.customerName}: {o.customer_name||'—'}</p></div>
    {o.captain_name&&<div className="order-person"><span className="mini-avatar">{o.captain_profile_image?<SafeImage src={o.captain_profile_image} alt={o.captain_name||''}/>:<span>◉</span>}</span><p>{t.captainName}: {o.captain_name}</p></div>}
@@ -625,6 +628,105 @@ function CustomerHome({t}){
  </>;
 }
 
+function CustomerServicePage({t,lang}){
+ const {code}=useParams();
+ if(['food','grocery','pharmacy'].includes(code))return <CustomerStorefront lang={lang} serviceCode={code}/>;
+ if(code==='parcel'||code==='logistics')return <DirectDeliveryService t={t} lang={lang} service={code}/>;
+ return <Navigate to={code==='ride'?'/ride':'/'}/>;
+}
+
+function DirectDeliveryService({t,lang,service}){
+ const isQuote=service==='logistics';
+ const copy=lang==='en'?{
+  title:isQuote?'Special shipping':'Parcel & document delivery',pickup:'Pickup address',dropoff:'Delivery address',
+  pickupLabel:'Pickup location',dropoffLabel:'Delivery location',useLocation:'Use my location',name:'Name',phone:'Phone',
+  sender:'Sender details',recipient:'Recipient details',packageType:'Parcel type',weight:'Weight (kg)',dimensions:'Size / dimensions',
+  pieces:'Number of pieces',notes:'Notes',send:isQuote?'Request a shipping quote':'Request delivery',loading:'Sending…',
+  quoteRequested:'Quote requested',quoteOffered:'Quote offered',acceptQuote:'Accept quote',history:'Previous shipments',
+  empty:'No shipments yet',mapError:'Choose both pickup and delivery points.',
+ }:{title:isQuote?'الشحن الخاص':'توصيل الطرود والمستندات',pickup:'عنوان الاستلام',dropoff:'عنوان التسليم',
+  pickupLabel:'موقع الاستلام',dropoffLabel:'موقع التسليم',useLocation:'استخدم موقعي',name:'الاسم',phone:'رقم الهاتف',
+  sender:'بيانات المرسل',recipient:'بيانات المستلم',packageType:'نوع الطرد',weight:'الوزن (كغم)',dimensions:'الحجم / الأبعاد',
+  pieces:'عدد القطع',notes:'ملاحظات',send:isQuote?'طلب عرض سعر للشحن':'طلب توصيل',loading:'جارٍ الإرسال…',
+  quoteRequested:'بانتظار عرض السعر',quoteOffered:'عرض السعر متاح',acceptQuote:'قبول عرض السعر',history:'الشحنات السابقة',
+  empty:'لا توجد شحنات سابقة',mapError:'حدد موقعي الاستلام والتسليم.',
+ };
+ const [form,setForm]=useState({
+  pickup_address:'',dropoff_address:'',pickup_latitude:'',pickup_longitude:'',dropoff_latitude:'',dropoff_longitude:'',
+  recipient_name:'',recipient_phone:'',sender_name:'',sender_phone:'',package_type:'parcel',weight_kg:'',dimensions:'',piece_count:'1',notes:'',
+ });
+ const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const {data:orders,reload}=useLoad('/orders/');
+ const labels=makeMapLabels(t,lang,'customer');
+ const points=[
+  ...(form.pickup_latitude&&form.pickup_longitude?[{id:'pickup',kind:'pickup',lat:Number(form.pickup_latitude),lng:Number(form.pickup_longitude),label:lang==='en'?'Pickup':'الاستلام',draggable:true}]:[]),
+  ...(form.dropoff_latitude&&form.dropoff_longitude?[{id:'dropoff',kind:'dropoff',lat:Number(form.dropoff_latitude),lng:Number(form.dropoff_longitude),label:lang==='en'?'Delivery':'التسليم',draggable:true}]:[]),
+ ];
+ function field(key,value){setForm(current=>({...current,[key]:value}))}
+ function movePoint(id,lat,lng){
+  const prefix=id==='pickup'?'pickup':'dropoff';
+  setForm(current=>({...current,[`${prefix}_latitude`]:String(roundCoordinate(lat)),[`${prefix}_longitude`]:String(roundCoordinate(lng))}));
+ }
+ function locate(prefix){
+  if(!navigator.geolocation){setError(copy.mapError);return}
+  navigator.geolocation.getCurrentPosition(position=>{
+   movePoint(prefix,position.coords.latitude,position.coords.longitude);setError('');
+  },()=>setError(t.locationDenied||copy.mapError),{enableHighAccuracy:true,timeout:12000});
+ }
+ async function submit(event){
+  event.preventDefault();setError('');setNotice('');
+  if(busy)return;
+  if(!form.pickup_latitude||!form.pickup_longitude||!form.dropoff_latitude||!form.dropoff_longitude){setError(copy.mapError);return}
+  setBusy(true);
+  try{
+   const payload={...form,pickup_latitude:roundCoordinate(form.pickup_latitude),pickup_longitude:roundCoordinate(form.pickup_longitude),dropoff_latitude:roundCoordinate(form.dropoff_latitude),dropoff_longitude:roundCoordinate(form.dropoff_longitude)};
+   const result=await api(`/orders/service/${service}/`,{method:'POST',headers:{'Idempotency-Key':newRequestKey()},body:JSON.stringify(payload)});
+   setNotice(`${isQuote?copy.quoteRequested:t.rideCreated} #${result.order_number}${result.total&&Number(result.total)>0?` · ${money(result.total)}`:''}`);
+   reload();
+  }catch(err){setError(err.message)}finally{setBusy(false)}
+ }
+ async function acceptQuote(order){
+  setBusy(true);setError('');
+  try{await api(`/orders/${order.id}/quote/`,{method:'POST',body:JSON.stringify({accept:true})});reload()}
+  catch(err){setError(err.message)}finally{setBusy(false)}
+ }
+ const history=orders.filter(order=>order.order_type==='parcel'&&order.service_type===service);
+ const route=points.length===2?{from:[Number(form.pickup_latitude),Number(form.pickup_longitude)],to:[Number(form.dropoff_latitude),Number(form.dropoff_longitude)]}:null;
+ return <>
+  <section className="panel ride-panel">
+   <div className="section-head ride-head"><ServiceIcon name={isQuote?'truck':'store'} size="lg"/><div><h3>{copy.title}</h3><p>{copy.pickupLabel} · {copy.dropoffLabel}</p></div></div>
+   <DeliveryMap points={points} route={route} fitKey={points.map(point=>point.id).join('-')} labels={labels} height={300} showMetrics={true} onPointMove={movePoint}/>
+   <form className="form-stack" onSubmit={submit}>
+    {['pickup','dropoff'].map(prefix=><div className="ride-location-card" key={prefix}>
+     <label>{prefix==='pickup'?copy.pickup:copy.dropoff}<input value={form[`${prefix}_address`]} onChange={event=>field(`${prefix}_address`,event.target.value)} required/></label>
+     <button type="button" className="secondary" onClick={()=>locate(prefix)}>{copy.useLocation}</button>
+     <div className="coordinate-inputs">
+      <label>{t.latitude}<input type="number" step="any" value={form[`${prefix}_latitude`]} onChange={event=>field(`${prefix}_latitude`,event.target.value)}/></label>
+      <label>{t.longitude}<input type="number" step="any" value={form[`${prefix}_longitude`]} onChange={event=>field(`${prefix}_longitude`,event.target.value)}/></label>
+     </div>
+    </div>)}
+    {isQuote&&<label>{copy.sender}<div className="two-fields"><input aria-label={copy.name} placeholder={copy.name} value={form.sender_name} onChange={event=>field('sender_name',event.target.value)} required/><input aria-label={copy.phone} placeholder={copy.phone} value={form.sender_phone} onChange={event=>field('sender_phone',event.target.value)} required/></div></label>}
+    <label>{copy.recipient}<div className="two-fields"><input aria-label={copy.name} placeholder={copy.name} value={form.recipient_name} onChange={event=>field('recipient_name',event.target.value)} required/><input aria-label={copy.phone} placeholder={copy.phone} value={form.recipient_phone} onChange={event=>field('recipient_phone',event.target.value)} required/></div></label>
+    <div className="two-fields">
+     <label>{copy.packageType}<input value={form.package_type} onChange={event=>field('package_type',event.target.value)}/></label>
+     <label>{copy.weight}<input type="number" min="0" max="1000" step="0.1" value={form.weight_kg} onChange={event=>field('weight_kg',event.target.value)}/></label>
+     <label>{copy.dimensions}<input value={form.dimensions} onChange={event=>field('dimensions',event.target.value)}/></label>
+     {isQuote&&<label>{copy.pieces}<input type="number" min="1" max="100" value={form.piece_count} onChange={event=>field('piece_count',event.target.value)}/></label>}
+    </div>
+    <label>{copy.notes}<textarea value={form.notes} onChange={event=>field('notes',event.target.value)} maxLength={1000}/></label>
+    <button disabled={busy}>{busy?copy.loading:copy.send}</button>
+    {error&&<p className="error">{error}</p>}{notice&&<p className="success-note">{notice}</p>}
+   </form>
+  </section>
+  <section><h3 className="list-title">{copy.history}</h3><div className="order-grid">{history.map(order=><article className="order-card" key={order.id}>
+   <b>{order.order_number} · {statusLabel(t,order.status)}</b><p>{order.pickup_address} → {order.dropoff_address}</p>
+   <p>{order.service_details?.quote_status==='offered'?`${copy.quoteOffered}: ${money(order.total)}`:order.service_details?.quote_status==='requested'?copy.quoteRequested:money(order.total)}</p>
+   {order.service_details?.quote_status==='offered'&&<button disabled={busy} onClick={()=>acceptQuote(order)}>{copy.acceptQuote}</button>}
+   {order.captain_name&&<p>{order.captain_name}</p>}
+  </article>)}</div>{!history.length&&<p className="note">{copy.empty}</p>}</section>
+ </>
+}
+
 function RideBooking({t,lang,role}){
  const [form,setForm]=useState({pickup_address:'',dropoff_address:'',pickup_latitude:'',pickup_longitude:'',dropoff_latitude:'',dropoff_longitude:'',delivery_fee:'15.00',requires_checkpoint:false});
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
@@ -744,6 +846,46 @@ function RideBooking({t,lang,role}){
 }
 
 function Catalog({t}){
+ const [isPharmacy,setIsPharmacy]=useState(false)
+ useEffect(()=>{api('/merchant/profile/').then(profile=>setIsPharmacy(profile.service_type==='pharmacy')).catch(()=>setIsPharmacy(false))},[])
+ return <><CatalogContent t={t}/>{isPharmacy&&<PharmacyProductSafety t={t}/>}</>
+}
+
+function PharmacyProductSafety({t}){
+ const {data,err,reload}=useLoad('/products/')
+ const [changes,setChanges]=useState({})
+ const [busy,setBusy]=useState(null)
+ const lang=document.documentElement.lang||'ar'
+ const words=lang==='en'?{title:'Pharmacy safety & review',prescription:'Prescription required',controlled:'Controlled medicine',pending:'Pending admin approval',save:'Save safety flags'}:
+  lang==='he'?{title:'בטיחות ובדיקת בית מרקחת',prescription:'נדרש מרשם',controlled:'תרופה בפיקוח',pending:'ממתין לאישור הנהלה',save:'שמירת פרטי בטיחות'}:
+  {title:'سلامة منتجات الصيدلية والمراجعة',prescription:'يتطلب وصفة طبية',controlled:'دواء مقيد',pending:'بانتظار اعتماد الإدارة',save:'حفظ بيانات السلامة'}
+ async function save(product){
+  setBusy(product.id)
+  try{
+   const flags=changes[product.id]||{}
+   await api(`/products/${product.id}/`,{method:'PATCH',body:JSON.stringify({
+    prescription_required:flags.prescription_required??product.prescription_required,
+    controlled_substance:flags.controlled_substance??product.controlled_substance,
+   })})
+   setChanges(current=>{const next={...current};delete next[product.id];return next})
+   reload()
+  }catch(error){notify(error.message,'error')}finally{setBusy(null)}
+ }
+ return <section className="panel"><div className="section-head"><div><h3>{words.title}</h3><p>{words.pending}</p></div></div>
+  {err&&<p className="error">{err}</p>}
+  <div className="table-wrap"><table><thead><tr><th>{t.name}</th><th>{words.prescription}</th><th>{words.controlled}</th><th>{t.status}</th><th/></tr></thead>
+   <tbody>{data.map(product=>{const flags=changes[product.id]||{};return <tr key={product.id}>
+    <td>{product.name}</td>
+    <td><input type="checkbox" checked={flags.prescription_required??!!product.prescription_required} onChange={event=>setChanges(current=>({...current,[product.id]:{...current[product.id],prescription_required:event.target.checked}}))}/></td>
+    <td><input type="checkbox" checked={flags.controlled_substance??!!product.controlled_substance} onChange={event=>setChanges(current=>({...current,[product.id]:{...current[product.id],controlled_substance:event.target.checked}}))}/></td>
+    <td>{product.pharmacy_review_status||'pending'}</td>
+    <td><button disabled={busy===product.id||!changes[product.id]} onClick={()=>save(product)}>{words.save}</button></td>
+   </tr>})}
+   {!data.length&&<tr><td colSpan="5">{t.empty}</td></tr>}</tbody></table></div>
+ </section>
+}
+
+function CatalogContent({t}){
  const {data,err,updatedAt,reload}=useLoad('/products/',(m,patch)=>{
   if(m?.type!=='stock.updated'||m.product_id==null)return;
   patch(rows=>rows.map(p=>p.id===m.product_id?{...p,quantity:m.quantity,stock_status:m.stock_status||p.stock_status}:p));
@@ -751,19 +893,19 @@ function Catalog({t}){
   const key=m.reason==='cancel'?'stockRestoredNotice':'stockSoldNotice';
   notify(fillText(t[key],{count:Math.abs(Number(m.delta)||0),name:m.name||'',left:m.quantity}),'success');
  });
- const [form,setForm]=useState({name:'',price:'',category:'',description:'',quantity:'',low_stock_threshold:'',discount_price:'',discount_starts_at:'',discount_ends_at:''})
+ const [form,setForm]=useState({name:'',price:'',category:'',description:'',quantity:'',low_stock_threshold:'',discount_price:'',discount_starts_at:'',discount_ends_at:'',prescription_required:false,controlled_substance:false})
  const [image,setImage]=useState(null),[preview,setPreview]=useState(''),[saving,setSaving]=useState(false)
  const [query,setQuery]=useState('')
- const [editing,setEditing]=useState(null),[editForm,setEditForm]=useState({name:'',price:'',category:'',description:'',quantity:'',low_stock_threshold:'',discount_price:'',discount_starts_at:'',discount_ends_at:''}),[editImage,setEditImage]=useState(null),[editPreview,setEditPreview]=useState(''),[editBusy,setEditBusy]=useState(false)
+ const [editing,setEditing]=useState(null),[editForm,setEditForm]=useState({name:'',price:'',category:'',description:'',quantity:'',low_stock_threshold:'',discount_price:'',discount_starts_at:'',discount_ends_at:'',prescription_required:false,controlled_substance:false}),[editImage,setEditImage]=useState(null),[editPreview,setEditPreview]=useState(''),[editBusy,setEditBusy]=useState(false)
  const [stockBusy,setStockBusy]=useState(null)
  const visible=data.filter(p=>`${p.name||''} ${p.category||''} ${p.description||''}`.toLowerCase().includes(query.trim().toLowerCase()))
  function chooseImage(file){setImage(file||null);setPreview(file?URL.createObjectURL(file):'')}
- const emptyForm={name:'',price:'',category:'',description:'',quantity:'',low_stock_threshold:'',discount_price:'',discount_starts_at:'',discount_ends_at:''};
+ const emptyForm={name:'',price:'',category:'',description:'',quantity:'',low_stock_threshold:'',discount_price:'',discount_starts_at:'',discount_ends_at:'',prescription_required:false,controlled_substance:false};
  const promotional=v=>['quantity','low_stock_threshold','discount_price'].includes(v[0])?String(v[1]).trim()==='':(v[0].startsWith('discount_')&&!v[1]);
  async function save(e){e.preventDefault();setSaving(true);try{const fd=new FormData();Object.entries(form).forEach(([k,v])=>{if(promotional([k,v]))return;fd.append(k,v)});if(image)fd.append('image',image);await api('/products/',{method:'POST',body:fd});setForm(emptyForm);chooseImage(null);reload();notify(t.productAdded,'success')}catch(e){notify(e.message,'error')}finally{setSaving(false)}}
  async function toggle(p){try{await api(`/products/${p.id}/`,{method:'PATCH',body:JSON.stringify({available:!p.available})});reload();notify(t.productAvailabilityUpdated,'success')}catch(e){notify(e.message,'error')}}
  async function adjustStock(p,delta){if(stockBusy===p.id)return;setStockBusy(p.id);try{await api(`/products/${p.id}/stock/`,{method:'POST',body:JSON.stringify({delta})});reload();notify(t.productUpdated||t.productAdded,'success')}catch(e){notify(e.message,'error')}finally{setStockBusy(null)}}
- function startEdit(p){setEditing(p.id);setEditForm({name:p.name||'',price:String(p.price??''),category:p.category||'',description:p.description||'',quantity:p.quantity==null?'':String(p.quantity),low_stock_threshold:p.low_stock_threshold==null?'':String(p.low_stock_threshold),discount_price:p.discount_price==null?'':String(p.discount_price),discount_starts_at:(p.discount_starts_at||'').slice(0,16),discount_ends_at:(p.discount_ends_at||'').slice(0,16)});setEditImage(null);setEditPreview(p.image||'')}
+ function startEdit(p){setEditing(p.id);setEditForm({name:p.name||'',price:String(p.price??''),category:p.category||'',description:p.description||'',quantity:p.quantity==null?'':String(p.quantity),low_stock_threshold:p.low_stock_threshold==null?'':String(p.low_stock_threshold),discount_price:p.discount_price==null?'':String(p.discount_price),discount_starts_at:(p.discount_starts_at||'').slice(0,16),discount_ends_at:(p.discount_ends_at||'').slice(0,16),prescription_required:!!p.prescription_required,controlled_substance:!!p.controlled_substance});setEditImage(null);setEditPreview(p.image||'')}
  function cancelEdit(){setEditing(null);setEditImage(null);setEditPreview('')}
  async function saveEdit(e){e.preventDefault();setEditBusy(true);try{const fd=new FormData();Object.entries(editForm).forEach(([k,v])=>{if(promotional([k,v]))return;fd.append(k,v)});if(editImage)fd.append('image',editImage);await api(`/products/${editing}/`,{method:'PATCH',body:fd});cancelEdit();reload();notify(t.productUpdated||t.productAdded,'success')}catch(e){notify(e.message,'error')}finally{setEditBusy(false)}}
  async function removeProduct(p){if(!(await confirmAction({title:t.deleteProduct,message:t.deleteProductConfirm||'حذف هذا المنتج نهائياً؟',confirmLabel:t.deleteProduct,cancelLabel:t.cancel})))return;try{await api(`/products/${p.id}/`,{method:'DELETE'});if(editing===p.id)cancelEdit();reload();notify(t.productDeleted||t.productAvailabilityUpdated,'success')}catch(e){notify(e.message,'error')}}

@@ -8,7 +8,7 @@ from .views import (
     AdminAccountAuditView, AdminUserSubscriptionView, AdminSubscriptionPaymentView,
     AdminSubscriptionsView, AdminCaptainApprovalView, AdminCaptainServicesView,
     ChangePasswordView, AccountProfileView, AdminStoresView, MerchantReportsView,
-    NotificationListView, NotificationReadView,
+    NotificationListView, NotificationReadView, CustomerDeliveryRequestView,
 )
 from .merchant_views import (
     MerchantDashboardView, MerchantAnalyticsView, MerchantBranchesView,
@@ -19,7 +19,7 @@ from .merchant_views import (
 from .control_views import (
     AdminBranchesView, AdminControlMeView, AdminPlatformSettingsView, AdminProvidersView,
     AdminRegionDetailView, AdminRegionsView, AdminServiceDetailView, AdminServicesView,
-    AdminStaffView, ServiceCatalogView,
+    AdminStaffView, ServiceCatalogView, AdminPharmacyProductsView,
 )
 from .control_ops import (
     AdminAlertsView, AdminAnalyticsView, AdminAuditLogView, AdminFinanceCenterView,
@@ -71,6 +71,7 @@ urlpatterns = [
     path("admin/captains/<int:captain_profile_id>/approval/", AdminCaptainApprovalView.as_view()),
     path("admin/captains/<int:captain_profile_id>/services/", AdminCaptainServicesView.as_view()),
     path("", include(router.urls)),
+    path("orders/service/<str:service>/", CustomerDeliveryRequestView.as_view()),
     path("dashboard/summary/", DashboardSummaryView.as_view()),
     path("admin/operations/", AdminOperationsView.as_view()),
     # Admin control center
@@ -78,6 +79,8 @@ urlpatterns = [
     path("admin/control/me/", AdminControlMeView.as_view()),
     path("admin/control/services/", AdminServicesView.as_view()),
     path("admin/control/services/<int:service_id>/", AdminServiceDetailView.as_view()),
+    path("admin/control/pharmacy-products/", AdminPharmacyProductsView.as_view()),
+    path("admin/control/pharmacy-products/<int:product_id>/", AdminPharmacyProductsView.as_view()),
     path("admin/control/regions/", AdminRegionsView.as_view()),
     path("admin/control/regions/<int:region_id>/", AdminRegionDetailView.as_view()),
     path("admin/control/providers/", AdminProvidersView.as_view()),

@@ -261,6 +261,10 @@ class Product(models.Model):
     image = models.ImageField(upload_to="products/", blank=True, null=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     available = models.BooleanField(default=True)
+    prescription_required = models.BooleanField(default=False)
+    controlled_substance = models.BooleanField(default=False)
+    PHARMACY_REVIEW_STATES = [("pending", "Pending"), ("approved", "Approved"), ("rejected", "Rejected")]
+    pharmacy_review_status = models.CharField(max_length=12, choices=PHARMACY_REVIEW_STATES, default="pending")
     # NULL means the product predates inventory tracking: it keeps selling on
     # the available flag alone. New products are created with an explicit count.
     quantity = models.PositiveIntegerField(null=True, blank=True)
@@ -322,6 +326,7 @@ class Order(models.Model):
     required_vehicle = models.CharField(max_length=20, choices=REQUIRED_VEHICLES, default="any")
     status = models.CharField(max_length=24, choices=STATUSES, default="new")
     items = models.JSONField(default=list, blank=True)
+    service_details = models.JSONField(default=dict, blank=True)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     checkpoint_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
