@@ -31,6 +31,7 @@ from .validators import validate_document_upload, validate_image_upload
 from .services.order_completion import complete_order
 from .services.order_activity import record_order_activity
 from .services.merchant_access import ALL_PERMISSIONS, PERMISSION_LABELS, merchant_access, require_merchant
+from .services.service_scope import is_pharmacy_merchant, merchant_service_q, product_service_q
 from .services.inventory import record_movement
 from .services.proofs import proof_policy, proof_complete
 from .services.admin_control import has_permission
@@ -615,16 +616,12 @@ class MerchantViewSet(viewsets.ReadOnlyModelViewSet):
         )
         service = self.request.query_params.get("service", "").strip()
         if service:
-            categories = {
-                "food": ("food", "restaurant"),
-                "grocery": ("grocery", "supermarket"),
-                "pharmacy": ("pharmacy",),
-            }
-            if service not in categories:
+            if service not in ("food", "grocery", "pharmacy"):
                 return qs.none()
-            qs = qs.filter(
-                Q(services__code=service) | Q(category__in=categories[service])
-            )
+            # The administrator-managed activity is a real service relation, so
+            # the public catalogue honours it even when the store has no
+            # explicit "services" row of its own.
+            qs = qs.filter(merchant_service_q(service))
         return qs.distinct().order_by("shop_name")
 
 def subscription_access_error(user):
@@ -1092,12 +1089,16 @@ class ProductViewSet(viewsets.ModelViewSet):
         if service:
             if service not in ("food", "grocery", "pharmacy"):
                 return qs.none()
-            qs = qs.filter(Q(merchant__services__code=service) | Q(merchant__category__in={
-                "food": ("food", "restaurant"),
-                "grocery": ("grocery", "supermarket"),
-                "pharmacy": ("pharmacy",),
-            }[service]))
-        if service == "pharmacy" or (merchant_id and MerchantProfile.objects.filter(pk=merchant_id, category="pharmacy").exists()):
+            qs = qs.filter(product_service_q(service))
+        # A pharmacy shelf is recognised through the activity relation too, so a
+        # store opened from its own page can never expose prescription-only or
+        # unreviewed medicine just because the request omitted the service code.
+        pharmacy_shelf = service == "pharmacy"
+        if not pharmacy_shelf and merchant_id:
+            store = (MerchantProfile.objects.select_related("business_category__service")
+                     .filter(pk=merchant_id).first())
+            pharmacy_shelf = is_pharmacy_merchant(store)
+        if pharmacy_shelf:
             qs = qs.filter(
                 pharmacy_review_status="approved",
                 prescription_required=False,
@@ -1127,10 +1128,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         instance = serializer.instance
         old_price, old_discount, previous_quantity = instance.price, instance.discount_price, instance.quantity
         product = serializer.save()
-        pharmacy_product = (
-            instance.merchant.category == "pharmacy"
-            or instance.merchant.services.filter(code="pharmacy").exists()
-        )
+        pharmacy_product = is_pharmacy_merchant(instance.merchant)
         review_fields = {"name", "category", "description", "prescription_required", "controlled_substance"}
         if pharmacy_product and review_fields.intersection(data.keys()):
             product.pharmacy_review_status = "pending"

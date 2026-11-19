@@ -80,13 +80,30 @@ class RegisterSerializer(serializers.ModelSerializer):
 class MerchantPublicSerializer(serializers.ModelSerializer):
     service_type = serializers.CharField(read_only=True)
     business_category_code = serializers.SerializerMethodField()
+    branches = serializers.SerializerMethodField()
 
     class Meta:
         model = MerchantProfile
-        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "address", "latitude", "longitude", "opening_hours", "is_open", "temporarily_closed", "rating", "service_type", "business_category_code"]
+        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "business_category_code", "address", "latitude", "longitude", "opening_hours", "is_open", "temporarily_closed", "rating", "service_type", "branches"]
 
     def get_business_category_code(self, obj):
         return obj.business_category.code if obj.business_category_id else ""
+
+    def get_branches(self, obj):
+        """Active branches a customer may choose at checkout."""
+        return [
+            {
+                "id": branch.id,
+                "name": branch.name,
+                "address": branch.address,
+                "phone": branch.phone,
+                "latitude": None if branch.latitude is None else str(branch.latitude),
+                "longitude": None if branch.longitude is None else str(branch.longitude),
+                "opening_hours": branch.opening_hours,
+            }
+            for branch in obj.branches.filter(is_active=True).order_by("id")
+        ]
+
 
 class MerchantProfileSerializer(serializers.ModelSerializer):
     service_type = serializers.CharField(read_only=True)
@@ -280,7 +297,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "order_number", "customer", "captain", "status", "accepted_at", "captain_accepted_at",
             "ready_at", "captain_delivered_at", "completed_at", "completed_by",
             "completed_by_name", "completion_method", "created_at", "updated_at", "total", "subtotal",
-            "request_key", "service_type", "branch", "cancellation_reason", "delivery_otp_verified_at",
+            "request_key", "service_type", "cancellation_reason", "delivery_otp_verified_at",
             "proofs", "service_details",
         ]
 
@@ -385,7 +402,19 @@ class OrderSerializer(serializers.ModelSerializer):
                 attrs["pickup_latitude"] = normalize_coordinate(merchant.latitude)
                 attrs["pickup_longitude"] = normalize_coordinate(merchant.longitude)
                 attrs["service_type"] = service
-                attrs["branch"] = merchant.branches.filter(is_active=True).order_by("id").first()
+                selected_branch = attrs.get("branch")
+                if selected_branch is not None and (
+                    selected_branch.merchant_id != merchant.id or not selected_branch.is_active
+                ):
+                    raise serializers.ValidationError(
+                        {"branch": "Choose one of this store's active branches."}
+                    )
+                # The customer may pick the branch; otherwise the store's first
+                # active branch keeps legacy clients working unchanged.
+                attrs["branch"] = (
+                    selected_branch
+                    or merchant.branches.filter(is_active=True).order_by("id").first()
+                )
                 dlat = attrs.get("dropoff_latitude")
                 dlon = attrs.get("dropoff_longitude")
                 if dlat is None or dlon is None:

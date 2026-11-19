@@ -495,6 +495,9 @@ function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { m
 export default function CustomerStorefront({ lang, serviceCode }: Props) {
   const t = copy[lang];
   const rtl = lang !== 'en';
+  const branchText = lang === 'ar' ? 'الفرع' : lang === 'he' ? 'סניף' : 'Branch';
+  const branchChoose =
+    lang === 'ar' ? 'اختر الفرع' : lang === 'he' ? 'בחרו סניף' : 'Choose a branch';
 
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -503,6 +506,7 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
   const [ordersError, setOrdersError] = useState('');
   const [ordersReload, setOrdersReload] = useState(0);
   const [selectedMerchant, setSelectedMerchant] = useState<number | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState<number | null>(null);
   const [cart, setCart] = useState<CartLine[]>(readCart);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
@@ -617,6 +621,16 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
 
   const activeMerchant =
     merchants.find(m => m.id === selectedMerchant) || null;
+
+  const activeBranches = activeMerchant?.branches || [];
+
+  // One branch needs no choice; a multi-branch store must send the exact
+  // branch so the order reaches the right kitchen or shelf.
+  useEffect(() => {
+    setSelectedBranch(
+      activeBranches.length === 1 ? activeBranches[0].id : null
+    );
+  }, [activeMerchant?.id]);
 
   const filteredMerchants = useMemo(
     () =>
@@ -858,7 +872,8 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
           dropoff_notes: notes.trim(),
           payment_method: 'cash',
           order_type: 'store',
-          ...(serviceCode ? { service_code: serviceCode } : {})
+          ...(serviceCode ? { service_code: serviceCode } : {}),
+          ...(selectedBranch ? { branch: selectedBranch } : {})
         })
       });
 
@@ -1305,6 +1320,27 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
               <input type="number" min="0.50" max="500" step="0.50" required value={deliveryFee} onChange={event => setDeliveryFee(event.target.value)}/>
             </label>
             <p className="customer-v2-fee-note">{t.deliveryFeeNote}</p>
+            {activeBranches.length > 1 && (
+              <label>
+                {branchText}
+                <select
+                  required
+                  value={selectedBranch ?? ''}
+                  onChange={event =>
+                    setSelectedBranch(
+                      event.target.value ? Number(event.target.value) : null
+                    )
+                  }
+                >
+                  <option value="">{branchChoose}</option>
+                  {activeBranches.map(branch => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label>{t.customerLocation}</label>
             <CheckoutLocationMap merchant={activeMerchant} latitude={dropoffLat} longitude={dropoffLng} onSelect={(lat, lng, place) => { setDropoffLat(lat); setDropoffLng(lng); if (place) setAddress(place); }} t={t}/>
             <label>
@@ -1332,7 +1368,7 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
 
             <button
               className="customer-v2-submit"
-              disabled={!cart.length || cartInvalid || !address.trim() || dropoffLat == null || dropoffLng == null || !activeMerchant || activeMerchant.latitude == null || activeMerchant.longitude == null || submitting}
+              disabled={!cart.length || cartInvalid || !address.trim() || dropoffLat == null || dropoffLng == null || !activeMerchant || activeMerchant.latitude == null || activeMerchant.longitude == null || (activeBranches.length > 1 && !selectedBranch) || submitting}
             >
               {submitting ? t.loading : t.placeOrder}
               <span>←</span>
