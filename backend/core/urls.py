@@ -17,9 +17,10 @@ from .merchant_views import (
     MerchantPriceHistoryView, MerchantInventoryLedgerView,
 )
 from .control_views import (
-    AdminBranchesView, AdminControlMeView, AdminPlatformSettingsView, AdminProvidersView,
+    AdminBranchesView, AdminBusinessCategoriesView, AdminBusinessCategoryDetailView,
+    AdminControlMeView, AdminPlatformSettingsView, AdminProvidersView,
     AdminRegionDetailView, AdminRegionsView, AdminServiceDetailView, AdminServicesView,
-    AdminStaffView, ServiceCatalogView,
+    AdminStaffView, BusinessCategoryListView, ServiceCatalogView,
 )
 from .control_ops import (
     AdminAlertsView, AdminAnalyticsView, AdminAuditLogView, AdminFinanceCenterView,
@@ -78,6 +79,9 @@ urlpatterns = [
     path("admin/control/me/", AdminControlMeView.as_view()),
     path("admin/control/services/", AdminServicesView.as_view()),
     path("admin/control/services/<int:service_id>/", AdminServiceDetailView.as_view()),
+    path("admin/control/business-categories/", AdminBusinessCategoriesView.as_view()),
+    path("admin/control/business-categories/<int:category_id>/", AdminBusinessCategoryDetailView.as_view()),
+    path("business-categories/", BusinessCategoryListView.as_view()),
     path("admin/control/regions/", AdminRegionsView.as_view()),
     path("admin/control/regions/<int:region_id>/", AdminRegionDetailView.as_view()),
     path("admin/control/providers/", AdminProvidersView.as_view()),

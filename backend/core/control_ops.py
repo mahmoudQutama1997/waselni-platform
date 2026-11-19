@@ -25,7 +25,13 @@ LATE_MINUTES = 60
 def service_filter(service):
     """Match an order's service, including legacy store orders without one."""
     categories = [category for category, code in MERCHANT_CATEGORY_SERVICE.items() if code == service]
-    return Q(service_type=service) | Q(merchant__category__in=categories)
+    # business_category is the real relation; the legacy category list keeps
+    # historical orders (created before the link existed) visible.
+    return (
+        Q(service_type=service)
+        | Q(merchant__business_category__service__code=service)
+        | Q(merchant__category__in=categories)
+    )
 
 
 def order_row(order):

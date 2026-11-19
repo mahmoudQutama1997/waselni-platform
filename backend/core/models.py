@@ -83,6 +83,11 @@ class MerchantProfile(models.Model):
     )
     # Services this merchant is allowed to sell; empty means derive from category.
     services = models.ManyToManyField("PlatformService", blank=True, related_name="merchants")
+    # Administrator-managed business activity. Stores on the service through the
+    # category row, so the link is a database relation rather than string guessing.
+    business_category = models.ForeignKey(
+        "BusinessCategory", on_delete=models.SET_NULL, null=True, blank=True, related_name="merchants",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return self.shop_name
 
@@ -96,7 +101,38 @@ class MerchantProfile(models.Model):
 
     @property
     def service_type(self):
+        linked = self.business_category.service if self.business_category_id else None
+        if linked is not None:
+            return linked.code
         return MERCHANT_CATEGORY_SERVICE.get((self.category or "").strip().lower(), "food")
+
+
+class BusinessCategory(models.Model):
+    """A business activity line that maps a store to exactly one platform service.
+
+    Administrators add and edit these rows; ``MerchantProfile.business_category``
+    then gives every store a real foreign key to the service it trades under, so
+    nothing downstream has to compare free-text category names.
+    """
+
+    code = models.CharField(max_length=40, unique=True)
+    name_ar = models.CharField(max_length=80)
+    name_en = models.CharField(max_length=80)
+    service = models.ForeignKey(
+        "PlatformService", on_delete=models.SET_NULL, null=True, blank=True, related_name="business_categories",
+    )
+    # Pharmacies and similar lines need a licence on file before approval.
+    requires_license = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveSmallIntegerField(default=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sort_order", "code"]
+        verbose_name_plural = "business categories"
+
+    def __str__(self):
+        return self.name_en
 
 class CaptainProfile(models.Model):
     VEHICLES = [("car","Car"),("motorcycle","Motorcycle"),("truck","Truck")]

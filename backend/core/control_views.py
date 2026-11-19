@@ -16,8 +16,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import (
-    SERVICE_CODES, AuditLog, CaptainServiceEligibility, MerchantBranch, MerchantProfile,
-    Order, PlatformService, PlatformSettings, ServiceRegion, User,
+    SERVICE_CODES, AuditLog, BusinessCategory, CaptainServiceEligibility, MerchantBranch,
+    MerchantProfile, Order, PlatformService, PlatformSettings, ServiceRegion, User,
 )
 from .services.admin_control import (
     ADMIN_ROLE_LABELS, PERMISSION_ROLES, admin_role, has_permission, permissions_for, record_audit,
@@ -46,6 +46,18 @@ def decimal_or_none(value, field):
         raise ValidationError({field: "Enter a valid amount."})
     if parsed < 0:
         raise ValidationError({field: "The value cannot be negative."})
+    return parsed
+
+
+def small_int(value, default=100):
+    if value in (None, ""):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError({"sort_order": "Enter a whole number."})
+    if parsed < 0 or parsed > 10000:
+        raise ValidationError({"sort_order": "Enter a number between 0 and 10000."})
     return parsed
 
 
@@ -94,6 +106,26 @@ def service_payload(service, request=None):
         "regions": [{"id": r.id, "code": r.code, "name_ar": r.name_ar, "name_en": r.name_en} for r in service.regions.all()],
         "sort_order": service.sort_order,
         "updated_at": service.updated_at.isoformat() if service.updated_at else None,
+    }
+
+
+def business_category_payload(category):
+    service = category.service
+    return {
+        "id": category.id,
+        "code": category.code,
+        "name_ar": category.name_ar,
+        "name_en": category.name_en,
+        "service": {
+            "id": service.id, "code": service.code,
+            "name_ar": service.name_ar, "name_en": service.name_en,
+            "is_active": service.is_active, "is_operational": service.is_operational,
+        } if service else None,
+        "service_id": category.service_id,
+        "requires_license": category.requires_license,
+        "is_active": category.is_active,
+        "sort_order": category.sort_order,
+        "merchants_count": getattr(category, "merchants_count", None),
     }
 
 
@@ -410,7 +442,8 @@ class AdminProvidersView(APIView):
         guard(request, "providers")
         status = request.query_params.get("status") or ""
         query = (request.query_params.get("q") or "").strip().lower()
-        qs = MerchantProfile.objects.select_related("user").prefetch_related("services", "branches").order_by("-created_at")
+        qs = (MerchantProfile.objects.select_related("user", "business_category__service")
+              .prefetch_related("services", "branches").order_by("-created_at"))
         if status in dict(MerchantProfile.APPROVAL_STATES):
             qs = qs.filter(approval_status=status)
         if query:
@@ -432,6 +465,8 @@ class AdminProvidersView(APIView):
                 "phone": store.user.phone,
                 "shop_name": store.shop_name,
                 "category": store.category,
+                "business_category": business_category_payload(store.business_category) if store.business_category_id else None,
+                "service_type": store.service_type,
                 "address": store.address,
                 "latitude": float(store.latitude) if store.latitude is not None else None,
                 "longitude": float(store.longitude) if store.longitude is not None else None,
@@ -446,9 +481,16 @@ class AdminProvidersView(APIView):
                 "orders_completed": total.get("orders", 0),
                 "sales": str(total.get("sales") or Decimal("0.00")),
             })
-        return Response({"providers": rows, "counts": dict(
-            MerchantProfile.objects.values_list("approval_status").annotate(total=Count("id"))
-        )})
+        return Response({
+            "providers": rows,
+            "counts": dict(
+                MerchantProfile.objects.values_list("approval_status").annotate(total=Count("id"))
+            ),
+            "business_categories": [
+                business_category_payload(category) for category in
+                BusinessCategory.objects.select_related("service").filter(is_active=True)
+            ],
+        })
 
     def patch(self, request, store_id):
         guard(request, "providers")
@@ -457,7 +499,8 @@ class AdminProvidersView(APIView):
             if store is None:
                 raise NotFound("Provider not found.")
             before = {"approval_status": store.approval_status, "is_open": store.is_open,
-                      "category": store.category, "rejection_reason": store.rejection_reason}
+                      "category": store.category, "rejection_reason": store.rejection_reason,
+                      "business_category": store.business_category_id}
             data = request.data
             if "approval_status" in data:
                 status = str(data["approval_status"]).strip()
@@ -472,11 +515,26 @@ class AdminProvidersView(APIView):
                 store.reviewed_by = request.user
                 if status == "approved" and not store.is_open:
                     store.is_open = True
+                # Approving a store must put it in the service of its activity.
+                if status == "approved" and store.business_category_id and not store.services.exists():
+                    service = store.business_category.service
+                    if service is not None:
+                        store.services.add(service)
                 if status in ("rejected", "suspended"):
                     store.is_open = False
             for field in ("shop_name", "category", "address", "opening_hours"):
                 if field in data:
                     setattr(store, field, str(data[field]).strip())
+            if "business_category" in data:
+                raw = data["business_category"]
+                if raw in (None, "", "0"):
+                    store.business_category = None
+                else:
+                    category = BusinessCategory.objects.filter(pk=raw).first() if str(raw).isdigit() else BusinessCategory.objects.filter(code=str(raw).strip()).first()
+                    if category is None:
+                        raise ValidationError({"business_category": "Choose a valid business activity."})
+                    store.business_category = category
+                    store.category = category.code
             if "is_open" in data:
                 store.is_open = as_bool(data["is_open"]) and store.approval_status == "approved"
             if "temporarily_closed" in data:
@@ -486,6 +544,7 @@ class AdminProvidersView(APIView):
                 store.services.set(PlatformService.objects.filter(id__in=data["services"]))
             after = {"approval_status": store.approval_status, "is_open": store.is_open,
                      "category": store.category, "rejection_reason": store.rejection_reason,
+                     "business_category": store.business_category_id,
                      "services": [s.code for s in store.services.all()]}
             record_audit(request.user, "provider.review", "merchant", store.id,
                          f"{store.shop_name}: {store.approval_status}", before=before, after=after)
@@ -678,3 +737,121 @@ class AdminPlatformSettingsView(APIView):
                                            "commission": str(settings_row.default_commission_percent)
                                            if settings_row.default_commission_percent is not None else None})
         return self.get(request)
+
+
+class BusinessCategoryListView(APIView):
+    """Active business activities for merchant, admin and customer selectors."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        rows = (BusinessCategory.objects.filter(is_active=True)
+                .select_related("service").order_by("sort_order", "code"))
+        return Response({"categories": [business_category_payload(row) for row in rows]})
+
+
+class AdminBusinessCategoriesView(APIView):
+    """Administrator-managed business activities and their service link."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        guard(request, "services")
+        rows = (BusinessCategory.objects.select_related("service")
+                .annotate(merchants_count=Count("merchants")).order_by("sort_order", "code"))
+        return Response({
+            "categories": [business_category_payload(row) for row in rows],
+            "services": [
+                {"id": service.id, "code": service.code, "name_ar": service.name_ar,
+                 "name_en": service.name_en, "is_operational": service.is_operational}
+                for service in PlatformService.objects.order_by("sort_order", "code")
+            ],
+            "requires_license": True,
+        })
+
+    def _service(self, data):
+        raw = data.get("service") if "service" in data else data.get("service_id")
+        if raw in (None, "", 0, "0"):
+            return None
+        service = PlatformService.objects.filter(pk=raw).first() if str(raw).isdigit() else None
+        if service is None:
+            raise ValidationError({"service": "Choose a valid platform service."})
+        return service
+
+    def post(self, request):
+        guard(request, "services")
+        data = request.data
+        code = str(data.get("code", "")).strip().lower()
+        if not CODE_RE.match(code):
+            raise ValidationError({"code": "Use lowercase letters, numbers and underscores."})
+        if BusinessCategory.objects.filter(code=code).exists():
+            raise ValidationError({"code": "This activity code already exists."})
+        name_ar = str(data.get("name_ar", "")).strip()
+        name_en = str(data.get("name_en", "")).strip()
+        if not name_ar or not name_en:
+            raise ValidationError("Arabic and English names are required.")
+        with transaction.atomic():
+            category = BusinessCategory.objects.create(
+                code=code,
+                name_ar=name_ar[:80],
+                name_en=name_en[:80],
+                service=self._service(data),
+                requires_license=as_bool(data.get("requires_license", False)),
+                is_active=as_bool(data.get("is_active", True)),
+                sort_order=small_int(data.get("sort_order")),
+            )
+            record_audit(request.user, "business_category.create", "business_category", category.id,
+                         f"Created business activity {category.name_en}",
+                         after={"code": category.code, "service": category.service_id})
+        return Response(business_category_payload(category), status=201)
+
+
+class AdminBusinessCategoryDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, category_id):
+        guard(request, "services")
+        with transaction.atomic():
+            category = BusinessCategory.objects.select_for_update().select_related("service").filter(pk=category_id).first()
+            if category is None:
+                raise NotFound("Business activity not found.")
+            before = {"name_ar": category.name_ar, "name_en": category.name_en,
+                      "service": category.service_id, "is_active": category.is_active,
+                      "requires_license": category.requires_license}
+            data = request.data
+            for field in ("name_ar", "name_en"):
+                if field in data:
+                    value = str(data[field]).strip()
+                    if not value:
+                        raise ValidationError({field: "This name is required."})
+                    setattr(category, field, value[:80])
+            if "service" in data or "service_id" in data:
+                category.service = self.service_or_none(data)
+            if "requires_license" in data:
+                category.requires_license = as_bool(data["requires_license"])
+            if "is_active" in data:
+                category.is_active = as_bool(data["is_active"])
+            if "sort_order" in data:
+                category.sort_order = small_int(data["sort_order"])
+            category.save()
+            # Existing stores follow their activity's service when they had none.
+            if category.service_id:
+                for store in category.merchants.all():
+                    if not store.services.exists():
+                        store.services.add(category.service)
+            record_audit(request.user, "business_category.update", "business_category", category.id,
+                         f"Updated business activity {category.name_en}", before=before,
+                         after={"name_ar": category.name_ar, "name_en": category.name_en,
+                                "service": category.service_id, "is_active": category.is_active,
+                                "requires_license": category.requires_license})
+        return Response(business_category_payload(category))
+
+    @staticmethod
+    def service_or_none(data):
+        raw = data.get("service") if "service" in data else data.get("service_id")
+        if raw in (None, "", 0, "0"):
+            return None
+        service = PlatformService.objects.filter(pk=raw).first() if str(raw).isdigit() else None
+        if service is None:
+            raise ValidationError({"service": "Choose a valid platform service."})
+        return service

@@ -7,6 +7,12 @@ export const LABELS={
 LABELS.he={...LABELS.en,
  title:'מרכז השליטה',subtitle:'שירותים, ספקים, סניפים, שליחים ותפעול',refresh:'רענון',loading:'טוען…',error:'שגיאה בטעינה',empty:'אין נתונים',search:'חיפוש',save:'שמירה',cancel:'ביטול',edit:'עריכה',close:'סגירה',overview:'סקירה',services:'שירותים',providers:'ספקים',branches:'סניפים',captains:'שליחים',operations:'תפעול',map:'מפה',analytics:'אנליטיקה',finance:'כספים',staff:'צוות',support:'תמיכה',audit:'יומן ביקורת',notifications:'התראות',settings:'הגדרות',orders:'הזמנות',sales:'מכירות',status:'סטטוס',service:'שירות',region:'אזור',name:'שם',code:'קוד',category:'קטגוריה',role:'תפקיד',permissions:'הרשאות',approved:'מאושר',pending:'ממתין',suspended:'מושהה',rejected:'נדחה',active:'פעיל',inactive:'מושבת',total:'סה"כ',date:'תאריך',all:'הכל',assign:'הקצאה',reason:'סיבה',legacy:'ניהול קלאסי',legacyShort:'קלאסי'}
 
+Object.entries({
+ ar:{business:'أنواع الأنشطة',activitiesTitle:'أنواع الأنشطة التجارية',activitiesHint:'كل نشاط تجاري مرتبط بخدمة منصة، وعند اعتماد المتجر يدخل خدمته تلقائياً.',addActivity:'إضافة نشاط',activity:'نشاط المتجر',linkedService:'الخدمة المرتبطة',requiresLicense:'يتطلب ترخيصاً',merchantsCount:'متجر',noService:'بدون خدمة',activitySaved:'تم حفظ النشاط التجاري'},
+ en:{business:'Business activities',activitiesTitle:'Business activities',activitiesHint:'Each business activity links to one platform service; approving a store puts it in that service automatically.',addActivity:'Add activity',activity:'Store activity',linkedService:'Linked service',requiresLicense:'Licence required',merchantsCount:'stores',noService:'No service',activitySaved:'Business activity saved'},
+ he:{business:'סוגי עסקים',activitiesTitle:'סוגי עסקים',activitiesHint:'כל סוג עסק מקושר לשירות פלטפורמה; אישור חנות משייך אותה לשירות אוטומטית.',addActivity:'הוספת סוג עסק',activity:'סוג העסק',linkedService:'שירות מקושר',requiresLicense:'נדרש רישיון',merchantsCount:'חנויות',noService:'ללא שירות',activitySaved:'סוג העסק נשמר'},
+}).forEach(([code,labels])=>{LABELS[code]=Object.assign(LABELS[code]||{},labels)})
+
 export const GLYPHS={
  grid:'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
  layers:'M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5',

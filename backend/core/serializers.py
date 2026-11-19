@@ -78,17 +78,27 @@ class RegisterSerializer(serializers.ModelSerializer):
         return User.objects.create_user(password=password, **data)
 
 class MerchantPublicSerializer(serializers.ModelSerializer):
+    service_type = serializers.CharField(read_only=True)
+    business_category_code = serializers.SerializerMethodField()
+
     class Meta:
         model = MerchantProfile
-        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "address", "latitude", "longitude", "is_open", "rating"]
+        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "address", "latitude", "longitude", "is_open", "rating", "service_type", "business_category_code"]
+
+    def get_business_category_code(self, obj):
+        return obj.business_category.code if obj.business_category_id else ""
 
 class MerchantProfileSerializer(serializers.ModelSerializer):
     service_type = serializers.CharField(read_only=True)
+    business_category_code = serializers.SerializerMethodField()
 
     class Meta:
         model = MerchantProfile
-        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "address", "latitude", "longitude", "opening_hours", "is_open", "temporarily_closed", "prep_minutes", "rating", "service_type"]
+        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "business_category", "business_category_code", "address", "latitude", "longitude", "opening_hours", "is_open", "temporarily_closed", "prep_minutes", "rating", "service_type"]
         read_only_fields = ["id", "is_open", "rating", "service_type"]
+
+    def get_business_category_code(self, obj):
+        return obj.business_category.code if obj.business_category_id else ""
 
     def validate_latitude(self, value):
         return _validate_latitude(value)
@@ -110,6 +120,9 @@ class MerchantProfileSerializer(serializers.ModelSerializer):
         longitude = attrs.get("longitude", getattr(self.instance, "longitude", None))
         if (latitude is None) != (longitude is None):
             raise serializers.ValidationError("Provide both store coordinates.")
+        category = attrs.get("business_category")
+        if category is not None and not category.is_active:
+            raise serializers.ValidationError({"business_category": "Choose an active business activity."})
         return attrs
 
     def update(self, instance, validated_data):

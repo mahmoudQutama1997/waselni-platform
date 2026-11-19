@@ -554,9 +554,25 @@ class MerchantProfileSelfView(APIView):
         profile = self.get_profile(request)
         # Merchants may prepare/edit their draft store before subscription activation.
         # Public visibility remains gated by MerchantViewSet and subscription state.
+        if "business_category" in request.data and profile.is_approved:
+            raise PermissionDenied(
+                "Changing the business activity of an approved store is done by Waselni administration."
+            )
         serializer = MerchantProfileSerializer(profile, data=request.data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        profile = serializer.save()
+        # The chosen activity is what puts the store in a service; keep the two in
+        # sync so a store is never left without a service to trade under.
+        category = profile.business_category if profile.business_category_id else None
+        if category is not None:
+            updates = []
+            if profile.category != category.code:
+                profile.category = category.code
+                updates.append("category")
+            if updates:
+                profile.save(update_fields=updates)
+            if category.service_id and not profile.services.exists():
+                profile.services.add(category.service)
         return Response(serializer.data)
 
 

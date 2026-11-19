@@ -1869,6 +1869,9 @@ tbody tr:hover { background: #faf8fd; }
 .acc-row-line{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed #eee9f8;font-size:13px}
 .acc-service-matrix{display:flex;flex-direction:column;gap:4px}
 .acc-inline-editor{margin-top:12px;padding:12px;border-radius:12px;background:#faf8ff;border:1px dashed #ddd3f2;display:flex;flex-direction:column;gap:8px}
+.acc-inline-field{display:flex;flex-direction:column;gap:4px;font-size:12px;max-width:320px}
+.acc-form{display:grid;gap:10px;margin:12px 0;padding:14px;border-radius:14px;background:#faf8ff;border:1px solid #e7e0f6}
+.acc-form .acc-check{display:inline-flex;gap:6px;align-items:center;font-size:13px}
 .acc-map-stats{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#5f5680;margin-bottom:8px}
 .acc-pre{white-space:pre-wrap;font-size:10px;max-height:180px;overflow:auto;background:#f7f5fd;padding:8px;border-radius:8px;direction:ltr;text-align:left}
 .link-button{border:0;background:none;color:#6d35c8;text-decoration:underline;cursor:pointer;font-size:11px;padding:0 4px}

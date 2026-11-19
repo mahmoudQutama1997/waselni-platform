@@ -3,11 +3,13 @@ import {Link,useNavigate,useParams} from 'react-router-dom'
 import {api} from '../api'
 import {Glyph,LABELS,Loader,ErrorBox} from './adminUi.jsx'
 import {BranchesPanel,CaptainsPanel,OverviewPanel,ProvidersPanel,ServicesPanel} from './AdminPanelsCore.jsx'
+import {ActivitiesPanel} from './AdminPanelsActivities.jsx'
 import {AlertsPanel,AnalyticsPanel,AuditPanel,FinancePanel,MapPanel,OperationsPanel,SettingsPanel,StaffPanel,SupportPanel} from './AdminPanelsOps.jsx'
 
 const SECTIONS=[
  ['overview','grid','dashboard'],
  ['services','layers','services'],
+ ['business','grid','services'],
  ['providers','store','providers'],
  ['branches','pin','branches'],
  ['captains','scooter','captains'],
@@ -45,6 +47,7 @@ export default function AdminControlCenter({lang='ar'}){
  const panel=(()=>{
   switch(current){
    case 'services':return <ServicesPanel lang={lang} L={L}/>
+   case 'business':return <ActivitiesPanel lang={lang} L={L}/>
    case 'providers':return <ProvidersPanel lang={lang} L={L}/>
    case 'branches':return <BranchesPanel lang={lang} L={L}/>
    case 'captains':return <CaptainsPanel lang={lang} L={L}/>
