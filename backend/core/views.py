@@ -550,15 +550,41 @@ class MerchantProfileSelfView(APIView):
         profile = self.get_profile(request)
         return Response(MerchantProfileSerializer(profile, context={"request": request}).data)
 
+    @staticmethod
+    def submitted_category_id(value):
+        """Return a comparable activity id, or None for a blank value."""
+        if value is None:
+            return None
+        text = str(value).strip()
+        if text in ("", "0", "none", "null"):
+            return None
+        try:
+            return int(text)
+        except (TypeError, ValueError):
+            # Not an id; let the serializer (which also accepts FK instances)
+            # decide. Merchant clients always send the numeric id.
+            return "invalid"
+
     def patch(self, request):
         profile = self.get_profile(request)
         # Merchants may prepare/edit their draft store before subscription activation.
         # Public visibility remains gated by MerchantViewSet and subscription state.
-        if "business_category" in request.data and profile.is_approved:
-            raise PermissionDenied(
-                "Changing the business activity of an approved store is done by Waselni administration."
-            )
-        serializer = MerchantProfileSerializer(profile, data=request.data, partial=True, context={"request": request})
+        data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        if "business_category" in data:
+            current = profile.business_category_id
+            submitted = self.submitted_category_id(data["business_category"])
+            if submitted == "invalid":
+                # Leave the value in place so validation reports a field error.
+                pass
+            elif submitted is None or submitted == current:
+                # An unchanged or blank activity is not a change request: drop the
+                # key so the approved activity is never rewritten or cleared.
+                data.pop("business_category", None)
+            elif profile.is_approved:
+                raise PermissionDenied(
+                    "Changing the business activity of an approved store is done by Waselni administration."
+                )
+        serializer = MerchantProfileSerializer(profile, data=data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         profile = serializer.save()
         # The chosen activity is what puts the store in a service; keep the two in
@@ -573,7 +599,8 @@ class MerchantProfileSelfView(APIView):
                 profile.save(update_fields=updates)
             if category.service_id and not profile.services.exists():
                 profile.services.add(category.service)
-        return Response(serializer.data)
+        # Re-serialize the saved row so the response reflects any synced fields.
+        return Response(MerchantProfileSerializer(profile, context={"request": request}).data)
 
 
 class MerchantViewSet(viewsets.ReadOnlyModelViewSet):

@@ -101,12 +101,18 @@ class StoreServiceLinkTests(TestCase):
     def test_approved_store_activity_is_admin_controlled(self):
         self.store.approval_status = "approved"
         self.store.save(update_fields=["approval_status"])
+        pharmacy_service = make_service("pharmacy", name="Pharmacy")
+        other = BusinessCategory.objects.create(
+            code="pharmacy", name_ar="صيدلية", name_en="Pharmacy", service=pharmacy_service,
+        )
         client = APIClient()
         client.force_authenticate(self.owner)
         response = client.patch(
-            "/api/merchant/profile/", {"business_category": self.category.id}, format="json",
+            "/api/merchant/profile/", {"business_category": other.id}, format="json",
         )
         self.assertEqual(response.status_code, 403, response.data)
+        self.store.refresh_from_db()
+        self.assertEqual(self.store.business_category_id, self.category.id)
 
     def test_unknown_activity_is_rejected(self):
         client = APIClient()
