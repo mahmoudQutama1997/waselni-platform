@@ -78,7 +78,7 @@ def seed_business_categories(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("core", "0019_admin_control_center"),
+        ("core", "0020_service_details_and_pharmacy_safety"),
     ]
 
     operations = [

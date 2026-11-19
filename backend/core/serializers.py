@@ -83,7 +83,7 @@ class MerchantPublicSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MerchantProfile
-        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "address", "latitude", "longitude", "is_open", "rating", "service_type", "business_category_code"]
+        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "address", "latitude", "longitude", "opening_hours", "is_open", "temporarily_closed", "rating", "service_type", "business_category_code"]
 
     def get_business_category_code(self, obj):
         return obj.business_category.code if obj.business_category_id else ""
@@ -157,7 +157,7 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = "__all__"
-        read_only_fields = ["merchant"]
+        read_only_fields = ["merchant", "pharmacy_review_status"]
 
     def validate(self, attrs):
         price = attrs.get("price", getattr(self.instance, "price", None))
@@ -281,7 +281,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "ready_at", "captain_delivered_at", "completed_at", "completed_by",
             "completed_by_name", "completion_method", "created_at", "updated_at", "total", "subtotal",
             "request_key", "service_type", "branch", "cancellation_reason", "delivery_otp_verified_at",
-            "proofs",
+            "proofs", "service_details",
         ]
 
     def to_representation(self, instance):
@@ -327,9 +327,14 @@ class OrderSerializer(serializers.ModelSerializer):
                 merchant = attrs.get("merchant")
                 if not merchant:
                     raise serializers.ValidationError({"merchant": "Choose an open merchant."})
+                service = str(request.data.get("service_code") or merchant.service_type).strip()
+                if service not in SERVICE_CODES:
+                    raise serializers.ValidationError({"service_code": "Choose a supported service."})
+                if service != merchant.service_type and not merchant.services.filter(code=service).exists():
+                    raise serializers.ValidationError({"service_code": "This merchant is not approved for that service."})
                 if merchant.approval_status != "approved":
                     raise serializers.ValidationError({"merchant": "This store is awaiting Waselni approval."})
-                if not PlatformService.is_offered(merchant.service_type):
+                if not PlatformService.is_offered(service):
                     raise serializers.ValidationError({"merchant": "This service is paused by Waselni administration."})
                 from .services.merchant_access import store_open_state
                 open_now, closed_reason = store_open_state(merchant)
@@ -356,6 +361,11 @@ class OrderSerializer(serializers.ModelSerializer):
                         product = Product.objects.get(pk=product_id, merchant=merchant, available=True)
                     except Product.DoesNotExist:
                         raise serializers.ValidationError({"items": f"Product {product_id} is unavailable."})
+                    if service == "pharmacy" and (
+                        product.pharmacy_review_status != "approved"
+                        or product.prescription_required or product.controlled_substance
+                    ):
+                        raise serializers.ValidationError({"items": f"Product {product_id} requires a prescription or is not available for online ordering."})
                     # The final quantity check runs inside the creation transaction
                     # (reserve_stock) so concurrent orders cannot oversell. The price
                     # is always the server-side effective price, never a client value.
@@ -374,7 +384,7 @@ class OrderSerializer(serializers.ModelSerializer):
                 attrs["pickup_address"] = merchant.address or merchant.shop_name
                 attrs["pickup_latitude"] = normalize_coordinate(merchant.latitude)
                 attrs["pickup_longitude"] = normalize_coordinate(merchant.longitude)
-                attrs["service_type"] = merchant.service_type
+                attrs["service_type"] = service
                 attrs["branch"] = merchant.branches.filter(is_active=True).order_by("id").first()
                 dlat = attrs.get("dropoff_latitude")
                 dlon = attrs.get("dropoff_longitude")

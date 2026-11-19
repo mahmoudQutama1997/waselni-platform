@@ -162,3 +162,6 @@ Object.assign(he,{salesToday:'מכירות היום'});
 Object.assign(ar,{controlCenter:'مركز التحكم'});
 Object.assign(en,{controlCenter:'Control center'});
 Object.assign(he,{controlCenter:'מרכז השליטה'});
+Object.assign(ar,{offerQuote:'إرسال عرض السعر',quoteAmount:'قيمة عرض السعر',quoteRequested:'بانتظار عرض السعر',quoteOffered:'تم إرسال عرض السعر',quoteAccepted:'تم قبول عرض السعر',pharmacySafetyTitle:'سلامة منتجات الصيدلية والمراجعة',prescriptionRequired:'يتطلب وصفة طبية',controlledSubstance:'دواء مقيد',pharmacyReviewPending:'بانتظار اعتماد الإدارة',saveSafetyFlags:'حفظ بيانات السلامة',yes:'نعم'});
+Object.assign(en,{offerQuote:'Offer quote',quoteAmount:'Quote amount',quoteRequested:'Quote requested',quoteOffered:'Quote sent',quoteAccepted:'Quote accepted',pharmacySafetyTitle:'Pharmacy safety & review',prescriptionRequired:'Prescription required',controlledSubstance:'Controlled medicine',pharmacyReviewPending:'Pending admin approval',saveSafetyFlags:'Save safety flags',yes:'Yes'});
+Object.assign(he,{offerQuote:'שליחת הצעת מחיר',quoteAmount:'סכום הצעת מחיר',quoteRequested:'הצעת מחיר ממתינה',quoteOffered:'הצעת המחיר נשלחה',quoteAccepted:'הצעת המחיר אושרה',pharmacySafetyTitle:'בטיחות ובדיקת מוצרי בית מרקחת',prescriptionRequired:'נדרש מרשם',controlledSubstance:'תרופה בפיקוח',pharmacyReviewPending:'ממתין לאישור הנהלה',saveSafetyFlags:'שמירת פרטי בטיחות',yes:'כן'});

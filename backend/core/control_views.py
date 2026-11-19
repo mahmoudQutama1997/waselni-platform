@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 
 from .models import (
     SERVICE_CODES, AuditLog, BusinessCategory, CaptainServiceEligibility, MerchantBranch,
-    MerchantProfile, Order, PlatformService, PlatformSettings, ServiceRegion, User,
+    MerchantProfile, Order, PlatformService, PlatformSettings, Product, ServiceRegion, User,
 )
 from .services.admin_control import (
     ADMIN_ROLE_LABELS, PERMISSION_ROLES, admin_role, has_permission, permissions_for, record_audit,
@@ -199,6 +199,53 @@ class ServiceCatalogView(APIView):
                 "regions": [region.code for region in service.regions.all() if region.is_active],
             })
         return Response(countries)
+
+
+class AdminPharmacyProductsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        guard(request, "providers")
+        rows = Product.objects.select_related("merchant").filter(
+            merchant__category="pharmacy",
+        ).order_by("pharmacy_review_status", "name")
+        return Response([{
+            "id": product.id,
+            "name": product.name,
+            "category": product.category,
+            "price": str(product.price),
+            "merchant_id": product.merchant_id,
+            "merchant_name": product.merchant.shop_name,
+            "prescription_required": product.prescription_required,
+            "controlled_substance": product.controlled_substance,
+            "review_status": product.pharmacy_review_status,
+        } for product in rows])
+
+    def patch(self, request, product_id):
+        guard(request, "providers")
+        status = str(request.data.get("status", ""))
+        if status not in ("approved", "rejected"):
+            raise ValidationError({"status": "Choose approved or rejected."})
+        with transaction.atomic():
+            product = Product.objects.select_for_update().select_related("merchant").filter(
+                pk=product_id, merchant__category="pharmacy",
+            ).first()
+            if product is None:
+                raise NotFound("Pharmacy product not found.")
+            if status == "approved" and (product.prescription_required or product.controlled_substance):
+                raise ValidationError("Prescription-required and controlled products cannot be listed for online ordering.")
+            previous = product.pharmacy_review_status
+            product.pharmacy_review_status = status
+            product.save(update_fields=["pharmacy_review_status"])
+            record_audit(
+                request.user, "pharmacy_product.review", "product", product.id,
+                f"Set pharmacy product {product.name} to {status}",
+                before={"review_status": previous}, after={"review_status": status},
+            )
+        return Response({
+            "id": product.id,
+            "review_status": product.pharmacy_review_status,
+        })
 
 
 class AdminServicesView(APIView):

@@ -11,7 +11,7 @@ import type { CartLine, Merchant, Order, Product } from './types';
 import { GEOCODING_REVERSE_URL, GEOCODING_SEARCH_URL, geocodeUrl } from '../config';
 import { makeCoalescedLoader, uniqueRows } from '../lib/polling';
 
-type Props = { lang: 'ar' | 'en' | 'he' };
+type Props = { lang: 'ar' | 'en' | 'he'; serviceCode?: 'food' | 'grocery' | 'pharmacy' };
 
 type Copy = {
   greeting: string;
@@ -492,7 +492,7 @@ function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { m
   </div>;
 }
 
-export default function CustomerStorefront({ lang }: Props) {
+export default function CustomerStorefront({ lang, serviceCode }: Props) {
   const t = copy[lang];
   const rtl = lang !== 'en';
 
@@ -523,7 +523,7 @@ export default function CustomerStorefront({ lang }: Props) {
   useEffect(() => {
     let alive = true;
 
-    api('/merchants/')
+    api(`/merchants/${serviceCode ? `?service=${encodeURIComponent(serviceCode)}` : ''}`)
       .then(data => {
         if (alive) setMerchants(rows<Merchant>(data));
       })
@@ -556,7 +556,7 @@ export default function CustomerStorefront({ lang }: Props) {
       alive = false;
       clearInterval(orderTimer);
     };
-  }, [t.orderError, ordersReload]);
+  }, [t.orderError, ordersReload, serviceCode]);
 
   async function confirmOrderReceipt(orderId: number) {
     if (confirmingOrderId) return;
@@ -595,7 +595,7 @@ export default function CustomerStorefront({ lang }: Props) {
 
     setLoadingProducts(true);
 
-    api(`/products/?merchant=${selectedMerchant}`)
+    api(`/products/?merchant=${selectedMerchant}${serviceCode ? `&service=${encodeURIComponent(serviceCode)}` : ''}`)
       .then(data => {
         if (alive) {
           setProducts(
@@ -613,7 +613,7 @@ export default function CustomerStorefront({ lang }: Props) {
     return () => {
       alive = false;
     };
-  }, [selectedMerchant, t.orderError]);
+  }, [selectedMerchant, t.orderError, serviceCode]);
 
   const activeMerchant =
     merchants.find(m => m.id === selectedMerchant) || null;
@@ -678,7 +678,7 @@ export default function CustomerStorefront({ lang }: Props) {
     if (!merchantId) return true;
 
     try {
-      const data = await api(`/products/?merchant=${merchantId}`);
+      const data = await api(`/products/?merchant=${merchantId}${serviceCode ? `&service=${encodeURIComponent(serviceCode)}` : ''}`);
       const fresh = rows<Product>(data);
       const byId = new Map(fresh.map(product => [product.id, product]));
       const removed: string[] = [];
@@ -739,7 +739,7 @@ export default function CustomerStorefront({ lang }: Props) {
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [t]);
+  }, [t, serviceCode]);
 
   function addProduct(product: Product) {
     if (
@@ -857,7 +857,8 @@ export default function CustomerStorefront({ lang }: Props) {
           delivery_fee: deliveryFee,
           dropoff_notes: notes.trim(),
           payment_method: 'cash',
-          order_type: 'store'
+          order_type: 'store',
+          ...(serviceCode ? { service_code: serviceCode } : {})
         })
       });
 
@@ -872,7 +873,7 @@ export default function CustomerStorefront({ lang }: Props) {
       setOrders(rows<Order>(latest).slice(0, 3));
       // The order just consumed stock; refresh the shelf so the remaining
       // count drops immediately instead of waiting for the next focus event.
-      void api(`/products/?merchant=${merchantId}`)
+      void api(`/products/?merchant=${merchantId}${serviceCode ? `&service=${encodeURIComponent(serviceCode)}` : ''}`)
         .then(data => setProducts(rows<Product>(data).filter(product => product.available !== false)))
         .catch(() => undefined);
     } catch (e) {
@@ -893,8 +894,10 @@ export default function CustomerStorefront({ lang }: Props) {
           <span className="customer-v2-kicker">
             WASELNI · PALESTINE
           </span>
-          <h1>{t.greeting}</h1>
-          <p>{t.subtitle}</p>
+          <h1>{serviceCode === 'food' ? (lang === 'en' ? 'Restaurants & food' : lang === 'he' ? 'מסעדות ואוכל' : 'المطاعم وتوصيل الطعام') :
+            serviceCode === 'grocery' ? (lang === 'en' ? 'Groceries & supermarkets' : lang === 'he' ? 'מכולות וסופרמרקטים' : 'السوبرماركت والبقالة') :
+            serviceCode === 'pharmacy' ? (lang === 'en' ? 'Pharmacies' : lang === 'he' ? 'בתי מרקחת' : 'الصيدليات') : t.greeting}</h1>
+          <p>{serviceCode ? t.storeHint : t.subtitle}</p>
 
           <div className="customer-v2-search">
             <span aria-hidden="true">⌕</span>
@@ -944,7 +947,9 @@ export default function CustomerStorefront({ lang }: Props) {
             <div className="customer-v2-heading">
               <div>
                 <span className="customer-v2-eyebrow">{t.discover}</span>
-                <h2>{t.stores}</h2>
+                <h2>{serviceCode === 'food' ? (lang === 'en' ? 'Available restaurants' : lang === 'he' ? 'מסעדות זמינות' : 'المطاعم المتاحة') :
+                  serviceCode === 'grocery' ? (lang === 'en' ? 'Available supermarkets' : lang === 'he' ? 'סופרמרקטים זמינים' : 'متاجر السوبرماركت المتاحة') :
+                  serviceCode === 'pharmacy' ? (lang === 'en' ? 'Available pharmacies' : lang === 'he' ? 'בתי מרקחת זמינים' : 'الصيدليات المتاحة') : t.stores}</h2>
                 <p>{t.storeHint}</p>
               </div>
               <span className="customer-v2-count">

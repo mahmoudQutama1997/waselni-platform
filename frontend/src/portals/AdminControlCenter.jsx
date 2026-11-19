@@ -11,6 +11,7 @@ const SECTIONS=[
  ['services','layers','services'],
  ['business','grid','services'],
  ['providers','store','providers'],
+ ['pharmacy_products','store','providers'],
  ['branches','pin','branches'],
  ['captains','scooter','captains'],
  ['operations','orders','operations'],
@@ -49,6 +50,7 @@ export default function AdminControlCenter({lang='ar'}){
    case 'services':return <ServicesPanel lang={lang} L={L}/>
    case 'business':return <ActivitiesPanel lang={lang} L={L}/>
    case 'providers':return <ProvidersPanel lang={lang} L={L}/>
+   case 'pharmacy_products':return <PharmacyProductsPanel lang={lang} L={L}/>
    case 'branches':return <BranchesPanel lang={lang} L={L}/>
    case 'captains':return <CaptainsPanel lang={lang} L={L}/>
    case 'operations':return <OperationsPanel lang={lang} L={L}/>
@@ -67,13 +69,29 @@ export default function AdminControlCenter({lang='ar'}){
   <nav className="acc-nav" aria-label={L.title}>
    <div className="acc-nav-head"><span className="brand-mark small">و</span><div><b>{L.title}</b><small>{me.role_label}</small></div></div>
    <div className="acc-nav-links">
-    {visible.map(([key,icon])=><button type="button" key={key} className={current===key?'is-active':''} onClick={()=>go(key)}><Glyph name={icon} size={17}/><span>{L[key]}</span>{key==='notifications'&&alerts>0&&<b className="acc-badge">{alerts}</b>}</button>)}
+    {visible.map(([key,icon])=><button type="button" key={key} className={current===key?'is-active':''} onClick={()=>go(key)}><Glyph name={icon} size={17}/><span>{key==='pharmacy_products'?(lang==='en'?'Pharmacy review':lang==='he'?'בדיקת מוצרים':'مراجعة منتجات الصيدليات'):L[key]}</span>{key==='notifications'&&alerts>0&&<b className="acc-badge">{alerts}</b>}</button>)}
    </div>
    <Link className="acc-nav-legacy" to="/admin/legacy"><Glyph name="logout" size={16}/><span>{L.legacy}</span></Link>
   </nav>
   <main className="acc-main">
-   <header className="acc-header"><div><small className="eyebrow">WASELNI ADMIN · {me.role_label}</small><h2>{L[current]||L.title}</h2><p>{L.subtitle}</p></div><div className="header-actions"><Link className="button-like secondary" to="/admin/legacy">{L.legacy}</Link></div></header>
+   <header className="acc-header"><div><small className="eyebrow">WASELNI ADMIN · {me.role_label}</small><h2>{current==='pharmacy_products'?(lang==='en'?'Pharmacy product review':lang==='he'?'בדיקת מוצרי בית מרקחת':'مراجعة منتجات الصيدليات'):L[current]||L.title}</h2><p>{L.subtitle}</p></div><div className="header-actions"><Link className="button-like secondary" to="/admin/legacy">{L.legacy}</Link></div></header>
    {panel}
   </main>
  </div>
+}
+
+function PharmacyProductsPanel({lang,L}){
+ const words=lang==='en'?{hint:'Only approved, non-prescription products are visible to customers.',merchant:'Pharmacy',prescription:'Prescription required',controlled:'Controlled',approve:'Approve for sale',reject:'Reject',status:'Review status'}:
+  lang==='he'?{hint:'רק מוצרים מאושרים ללא מרשם מוצגים ללקוחות.',merchant:'בית מרקחת',prescription:'נדרש מרשם',controlled:'תרופה בפיקוח',approve:'אישור למכירה',reject:'דחייה',status:'מצב בדיקה'}:
+  {hint:'لا تظهر للزبائن إلا المنتجات المعتمدة التي لا تتطلب وصفة وليست مقيدة.',merchant:'الصيدلية',prescription:'يتطلب وصفة',controlled:'دواء مقيد',approve:'اعتماد للبيع',reject:'رفض',status:'حالة المراجعة'};
+ const [rows,setRows]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(null);
+ async function load(){try{setRows(await api('/admin/control/pharmacy-products/'));setError('')}catch(e){setError(e.message)}}
+ useEffect(()=>{load()},[]);
+ async function review(row,status){setBusy(row.id);setError('');try{await api(`/admin/control/pharmacy-products/${row.id}/`,{method:'PATCH',body:JSON.stringify({status})});await load()}catch(e){setError(e.message)}finally{setBusy(null)}}
+ return <section className="panel"><div className="section-head"><div><h3>{lang==='en'?'Pharmacy product review':lang==='he'?'בדיקת מוצרי בית מרקחת':'مراجعة منتجات الصيدليات'}</h3><p>{words.hint}</p></div><button className="secondary" onClick={load}>{L.refresh}</button></div>
+  {error&&<p className="error">{error}</p>}
+  <div className="table-wrap"><table><thead><tr><th>{L.name}</th><th>{words.merchant}</th><th>{L.category}</th><th>{words.prescription}</th><th>{words.controlled}</th><th>{words.status}</th><th/></tr></thead>
+   <tbody>{rows.map(row=><tr key={row.id}><td>{row.name}</td><td>{row.merchant_name}</td><td>{row.category||'—'}</td><td>{row.prescription_required?L.yes||'Yes':'—'}</td><td>{row.controlled_substance?L.yes||'Yes':'—'}</td><td>{L[row.review_status]||row.review_status}</td><td className="row-actions">{row.review_status==='pending'&&<><button disabled={busy===row.id} onClick={()=>review(row,'approved')}>{words.approve}</button><button className="secondary danger" disabled={busy===row.id} onClick={()=>review(row,'rejected')}>{words.reject}</button></>}</td></tr>)}
+   {!rows.length&&<tr><td colSpan="7">{L.empty}</td></tr>}</tbody></table></div>
+ </section>
 }

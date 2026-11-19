@@ -84,6 +84,14 @@ Important: run `python manage.py createsuperuser` once to create the initial pla
 7. The assigned captain moves the order through picked_up → delivering → completed.
 8. Customer, merchant, captain and admin receive order events; screens also refresh every five seconds as a fallback.
 
+## Customer service workflows
+
+- The service directory links to service-specific restaurant, grocery and pharmacy storefronts. Store and product queries are filtered by approved/open merchants, subscription state, and service category; pharmacy products additionally require administrator approval and cannot be marked prescription-required or controlled.
+- Parcel requests use `POST /api/orders/service/parcel/`. Prices are computed on the server from `PARCEL_BASE_FARE`, `PARCEL_PRICE_PER_KM`, and `PARCEL_PRICE_PER_KG` (defaults 5.00, 2.00, and 0.50 ILS). The resulting order enters captain dispatch and uses the existing eligibility, proof, status, and order-history flows.
+- Special logistics uses `POST /api/orders/service/logistics/` to request a quote. An administrator with provider-review permission offers a price through `POST /api/orders/{id}/quote/`; only the owning customer can accept it, after which the shipment becomes dispatchable.
+- Pharmacy products start pending review. Use **Admin → Pharmacy product review** to approve only non-prescription, non-controlled products. Products that are not approved or require a prescription remain hidden and are rejected by checkout.
+- Scooter rides continue to use the existing `/api/orders/ride/` workflow. All coordinates and delivery fares remain validated server-side; maps and GPS availability depend on the configured map/geolocation providers.
+
 ## Main API endpoints
 
 - `POST /api/auth/register/` — disabled (accounts are created by platform administration)
