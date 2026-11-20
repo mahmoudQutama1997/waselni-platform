@@ -386,9 +386,22 @@ const stockErrorMessage = (
 
 const readCart = (): CartLine[] => {
   try {
-    return JSON.parse(
+    const raw = JSON.parse(
       localStorage.getItem('waselni_customer_cart') || '[]'
-    ) as CartLine[];
+    ) as unknown;
+    // The cart outlives app versions and is shared by every store service, so a
+    // line written by an older build, another tab or an interrupted write may
+    // be unusable. A single broken line must not blank the whole service page:
+    // keep only lines that still carry a real product and a valid quantity.
+    return (Array.isArray(raw) ? raw : []).flatMap(line => {
+      const entry = line as Partial<CartLine> | null;
+      const product = entry?.product;
+      const quantity = Number(entry?.quantity);
+      if (!product || typeof product !== 'object') return [];
+      if (product.id == null || product.merchant == null) return [];
+      if (!Number.isFinite(quantity) || quantity <= 0) return [];
+      return [{ product, quantity: Math.max(1, Math.floor(quantity)) }];
+    });
   } catch {
     return [];
   }
@@ -398,7 +411,13 @@ const rows = <T,>(value: unknown): T[] => {
   const list = Array.isArray(value)
     ? (value as T[])
     : ((value as { results?: T[] })?.results || []);
-  return uniqueRows(list) as T[];
+  // A list response can contain a hole or a non-object row after a backend or
+  // proxy failure; rendering it would throw inside `merchant.shop_name`.
+  return uniqueRows(
+    (Array.isArray(list) ? list : []).filter(
+      row => row !== null && typeof row === 'object'
+    )
+  ) as T[];
 };
 
 function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { merchant: Merchant | null; latitude: number | null; longitude: number | null; onSelect: (lat: number, lng: number, address?: string) => void; t: Copy }) {
@@ -622,7 +641,9 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
   const activeMerchant =
     merchants.find(m => m.id === selectedMerchant) || null;
 
-  const activeBranches = activeMerchant?.branches || [];
+  const activeBranches = Array.isArray(activeMerchant?.branches)
+    ? activeMerchant!.branches!
+    : [];
 
   // One branch needs no choice; a multi-branch store must send the exact
   // branch so the order reaches the right kitchen or shelf.
@@ -667,12 +688,12 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
 
   const subtotal = cart.reduce(
     (sum, line) =>
-      sum + Number(line.product.price) * line.quantity,
+      sum + Number(line.product?.price || 0) * Number(line.quantity || 0),
     0
   );
 
   const cartCount = cart.reduce(
-    (sum, line) => sum + line.quantity,
+    (sum, line) => sum + Number(line.quantity || 0),
     0
   );
 

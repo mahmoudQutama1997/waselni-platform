@@ -108,14 +108,18 @@ class ApprovedMerchantProfileSaveTests(TestCase):
         store = self.assert_store_intact()
         self.assertEqual(store.description, "نص من الفورم")
 
-    def test_approved_merchant_cannot_change_activity(self):
+    def test_approved_merchant_activity_change_becomes_a_request(self):
         response = self.client.patch(
             "/api/merchant/profile/",
-            {"shop_name": "اسم لن يُحفظ", "business_category": self.other_activity.id},
+            {"shop_name": "سوبرماركت الأمانة", "business_category": self.other_activity.id},
             format="json",
         )
-        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(response.status_code, 200, response.data)
         store = self.assert_store_intact()
+        # The store cannot rewrite its own approved activity, but the choice is
+        # kept as a review request instead of being thrown away.
+        self.assertEqual(store.requested_business_category_id, self.other_activity.id)
+        self.assertTrue(response.data["activity_request_pending"])
         self.assertEqual(store.shop_name, "سوبرماركت الأمانة")
 
     def test_admin_can_change_activity_of_approved_store(self):

@@ -110,9 +110,11 @@ class StoreServiceLinkTests(TestCase):
         response = client.patch(
             "/api/merchant/profile/", {"business_category": other.id}, format="json",
         )
-        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(response.status_code, 200, response.data)
         self.store.refresh_from_db()
+        # The approved activity is unchanged; the merchant's choice is a request.
         self.assertEqual(self.store.business_category_id, self.category.id)
+        self.assertEqual(self.store.requested_business_category_id, other.id)
 
     def test_unknown_activity_is_rejected(self):
         client = APIClient()

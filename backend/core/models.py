@@ -88,6 +88,14 @@ class MerchantProfile(models.Model):
     business_category = models.ForeignKey(
         "BusinessCategory", on_delete=models.SET_NULL, null=True, blank=True, related_name="merchants",
     )
+    # An approved store may ask to move to another activity, but only the
+    # administrator applies it: the request is stored here and the current
+    # activity stays in force (and selling) until the request is reviewed.
+    requested_business_category = models.ForeignKey(
+        "BusinessCategory", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="requested_by_merchants",
+    )
+    activity_requested_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return self.shop_name
 

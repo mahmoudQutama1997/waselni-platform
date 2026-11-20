@@ -3,7 +3,7 @@ import L from './map/leaflet'
 import React,{useEffect,useMemo,useState,useRef} from 'react'
 import {Routes,Route,Link,NavLink,Navigate,useLocation,useNavigate} from 'react-router-dom'
 import {api,login,token,orderSocket,clearAuth,mediaUrl,roundCoordinate} from './api'
-import {createTileLayer} from './map/tiles'
+import {attachAttribution,createTileLayer} from './map/tiles'
 import {mapMarker,createMarkerIcon} from './map/markers'
 import DeliveryMap from './map/DeliveryMap'
 import {isValidLatLng,isLocationStale} from './map/routing'
@@ -487,8 +487,8 @@ function LocationPicker({latitude,longitude,onSelect,label='حدد الموقع 
  const mapWords=isEn?{search:'Search',searching:'Searching…',find:'Search for a city, street or address',current:'◎ My location',instructions:'Click the map or drag the marker to set the exact location.',gps:'Your browser does not support location.',denied:'Could not get your location. Allow location access.',delivery:'Delivery location',store:'Store location'}:isHe?{search:'חיפוש',searching:'מחפש…',find:'חיפוש עיר, רחוב או כתובת',current:'◎ המיקום שלי',instructions:'לחצו על המפה או גררו את הסמן כדי לבחור מיקום מדויק.',gps:'הדפדפן אינו תומך במיקום.',denied:'לא ניתן לקבל את המיקום. יש לאשר גישה למיקום.',delivery:'מיקום המסירה',store:'מיקום החנות'}:{search:'بحث',searching:'جارٍ البحث…',find:'ابحث عن مدينة أو شارع أو عنوان',current:'◎ موقعي الحالي',instructions:'اضغط على الخريطة أو اسحب العلامة لتحديد الموقع بدقة.',gps:'المتصفح لا يدعم تحديد الموقع.',denied:'تعذر تحديد موقعك. تأكد من السماح بإذن الموقع.',delivery:'موقع التوصيل',store:'موقع المتجر'};
  useEffect(()=>{
   if(!L||!mapRef.current||mapInstance.current)return;
-;const map=L.map(mapRef.current,{scrollWheelZoom:false}).setView([31.95,35.21],12);
-  createTileLayer({maxZoom:19}).addTo(map);
+;const map=L.map(mapRef.current,{scrollWheelZoom:false,attributionControl:false}).setView([31.95,35.21],12);
+  createTileLayer({maxZoom:19}).addTo(map);attachAttribution(map);
   map.on('click',e=>pickLocation(e.latlng.lat,e.latlng.lng));mapInstance.current=map;
   const id=setTimeout(()=>map.invalidateSize(),180);
   return()=>{clearTimeout(id);map.remove();mapInstance.current=null;selectedMarker.current=null;referenceMarker.current=null};
@@ -761,8 +761,8 @@ function RideBooking({t,lang,role}){
  }
  useEffect(()=>{
   if(!L||!mapRef.current||mapInstance.current)return;
-  const map=L.map(mapRef.current).setView([31.95,35.21],13);
-  createTileLayer({maxZoom:19}).addTo(map);
+  const map=L.map(mapRef.current,{attributionControl:false}).setView([31.95,35.21],13);
+  createTileLayer({maxZoom:19}).addTo(map);attachAttribution(map);
   map.on('click',e=>{
    const which=activePointRef.current==='pickup'?'pickup':'dropoff';
    setPoint(which,e.latlng.lat,e.latlng.lng,which==='pickup'?tRef.current.pickupSelected:tRef.current.destinationSelected);
@@ -928,11 +928,11 @@ function AccountProfile({t,me,setMe,onSignOut,lang}){
 }
 
 function Profile({t,lang='ar'}){
- const [profile,setProfile]=useState(null),[loading,setLoading]=useState(true),[logo,setLogo]=useState(null),[cover,setCover]=useState(null),[logoPreview,setLogoPreview]=useState(''),[coverPreview,setCoverPreview]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState(''),[saving,setSaving]=useState(false),[categories,setCategories]=useState([])
+ const [profile,setProfile]=useState(null),[loading,setLoading]=useState(true),[logo,setLogo]=useState(null),[cover,setCover]=useState(null),[logoPreview,setLogoPreview]=useState(''),[coverPreview,setCoverPreview]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState(''),[saving,setSaving]=useState(false),[categories,setCategories]=useState([]),[categoryError,setCategoryError]=useState('')
  useEffect(()=>{let live=true;setLoading(true);api('/merchant/profile/').then(p=>{if(!live)return;setProfile(p);setLogoPreview(p.image||'');setCoverPreview(p.cover_image||'');setError('')}).catch(e=>{if(!live)return;if(e.status===404){setProfile({shop_name:'',description:'',category:'general',business_category:'',address:'',opening_hours:'',latitude:'',longitude:''})}else setError(e.message)}).finally(()=>{if(live)setLoading(false)});return()=>{live=false}},[])
- useEffect(()=>{let live=true;api('/business-categories/').then(r=>{if(live)setCategories(r.categories||[])}).catch(()=>{});return()=>{live=false}},[])
+ useEffect(()=>{let live=true;api('/business-categories/').then(r=>{if(live){setCategories(Array.isArray(r?.categories)?r.categories:[]);setCategoryError('')}}).catch(e=>{if(live)setCategoryError(e.message)});return()=>{live=false}},[])
  function update(k,v){setProfile(p=>({...p,[k]:v}))}
- async function save(e){e.preventDefault();setSaving(true);setError('');setNotice('');try{const fd=new FormData();['shop_name','description','category','business_category','address','opening_hours','latitude','longitude'].forEach(k=>{if(k==='business_category'&&!profile[k])return;fd.append(k,profile[k]??'')});if(!fd.get('latitude')||!fd.get('longitude')){fd.delete('latitude');fd.delete('longitude')}if(logo)fd.append('image',logo);if(cover)fd.append('cover_image',cover);const r=await api('/merchant/profile/',{method:'PATCH',body:fd});setProfile(r);setLogoPreview(r.image||'');setCoverPreview(r.cover_image||'');setLogo(null);setCover(null);setNotice(r.approval_status==='pending'?t.storePendingSaved:t.profileSaved)}catch(e){setError(e.message)}finally{setSaving(false)}}
+ async function save(e){e.preventDefault();setSaving(true);setError('');setNotice('');try{const fd=new FormData();['shop_name','description','category','business_category','address','opening_hours','latitude','longitude'].forEach(k=>{if(k==='business_category'&&!profile[k])return;fd.append(k,profile[k]??'')});if(!fd.get('latitude')||!fd.get('longitude')){fd.delete('latitude');fd.delete('longitude')}if(logo)fd.append('image',logo);if(cover)fd.append('cover_image',cover);const r=await api('/merchant/profile/',{method:'PATCH',body:fd});setProfile(r);setLogoPreview(r.image||'');setCoverPreview(r.cover_image||'');setLogo(null);setCover(null);setNotice(r.activity_request_pending?t.storeActivityRequested:(r.approval_status==='pending'?t.storePendingSaved:t.profileSaved))}catch(e){setError(e.message)}finally{setSaving(false)}}
  if(loading||!profile)return <section className="panel store-profile"><div className="sk-line skeleton w-40"/><div className="sk-block skeleton profile-cover-skeleton"/><div className="sk-grid">{[0,1,2,3].map(i=><div className="sk-card" key={i}/>)}</div>{!loading&&error&&<p className="error">{error}</p>}</section>
  const status=profile.approval_status||'pending'
  const approvalLabel={pending:t.approvalPending,approved:t.approvalApproved,suspended:t.approvalSuspended,rejected:t.approvalRejected}[status]||status
@@ -948,7 +948,7 @@ function Profile({t,lang='ar'}){
    <div className="store-logo-row"><label className="store-logo-upload" htmlFor="store-logo">{logoPreview?<SafeImage src={logoPreview} alt={profile.shop_name||''}/>:<span>＋</span>}<input id="store-logo" type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];setLogo(f||null);if(f)setLogoPreview(URL.createObjectURL(f))}}/></label><div><h3>{profile.shop_name||t.storeName}</h3><small>{t.storeLogoHint}</small></div></div>
    <div className="profile-fields">
     <label>{t.storeName}<input value={profile.shop_name||''} onChange={e=>update('shop_name',e.target.value)} required/></label>
-    <label>{t.storeCategory}<select value={profile.business_category||''} disabled={status==='approved'} required onChange={e=>{const row=categories.find(c=>String(c.id)===e.target.value);setProfile(p=>({...p,business_category:e.target.value,category:row?row.code:p.category}))}}><option value="">—</option>{categories.map(row=><option key={row.id} value={row.id}>{lang==='ar'?row.name_ar:row.name_en}</option>)}{profile.business_category&&!categories.some(c=>String(c.id)===String(profile.business_category))&&<option value={profile.business_category}>{profile.business_category_code||profile.category}</option>}</select></label>
+    <label>{t.storeCategory}<select value={profile.business_category==null?'':String(profile.business_category)} required aria-describedby="store-activity-note" onChange={e=>{const value=e.target.value;const row=categories.find(c=>String(c.id)===value);setProfile(p=>({...p,business_category:value,category:row?row.code:p.category}))}}><option value="">—</option>{categories.map(row=><option key={row.id} value={String(row.id)}>{lang==='ar'?row.name_ar:row.name_en}</option>)}{profile.business_category&&!categories.some(c=>String(c.id)===String(profile.business_category))&&<option value={String(profile.business_category)}>{profile.business_category_code||profile.category}</option>}</select><small id="store-activity-note" className="profile-field-note">{status==='approved'?t.storeActivityAdminNote:t.storeActivityFreeNote}</small>{profile.requested_business_category&&<small className="profile-field-note is-pending">{t.storeActivityRequestPending}</small>}{categoryError&&<small className="profile-field-note is-error">{t.storeActivityLoadFailed}: {categoryError}</small>}</label>
     <label>{t.address}<input value={profile.address||''} onChange={e=>update('address',e.target.value)}/></label>
     <label>{t.openingHours}<input value={profile.opening_hours||''} onChange={e=>update('opening_hours',e.target.value)}/></label>
     <label className="wide-field">{t.description}<textarea rows="4" value={profile.description||''} onChange={e=>update('description',e.target.value)}/></label>

@@ -18,7 +18,7 @@ export default function PublicServices({lang='ar'}){
  return <section className="panel public-services" aria-label={words.title}>
   <div className="section-head"><div><h3>{words.title}</h3></div><span className="count-pill">{services?.length||0}</span></div>
   {error?<p className="error">{words.error}: {error}</p>:services?.length?
-   <div className="public-services-grid">{services.filter(service=>ROUTES[service.code]||ROUTES[service.effective_code]).map(service=><Link key={service.code} to={ROUTES[service.code]||ROUTES[service.effective_code]} className="public-service">
+   <div className="public-services-grid">{services.filter(service=>ROUTES[service.effective_code]||ROUTES[service.code]).map(service=><Link key={service.code} to={ROUTES[service.effective_code]||ROUTES[service.code]} className="public-service">
     <span className="feature-icon">{service.icon?<span aria-hidden="true">{service.icon}</span>:'✦'}</span><div><b>{service.name}</b>{service.description&&<small>{service.description}</small>}<small>{words.open} →</small></div>
    </Link>)}</div>:<p>{words.empty}</p>}
  </section>

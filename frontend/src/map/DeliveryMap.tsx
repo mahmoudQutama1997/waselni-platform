@@ -1,6 +1,6 @@
 import L from './leaflet'
 import { useEffect, useRef, useState } from 'react'
-import { createTileLayer } from './tiles'
+import { attachAttribution, createTileLayer } from './tiles'
 import { createMarkerIcon, type MapMarkerKind } from './markers'
 import {
   bearingBetween,
@@ -185,9 +185,10 @@ export default function DeliveryMap({
   // Create the map once. Cleanup removes it, its layers and its listeners.
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
-    const map = L.map(containerRef.current, { scrollWheelZoom: false, zoomControl: false, attributionControl: true })
+    const map = L.map(containerRef.current, { scrollWheelZoom: false, zoomControl: false, attributionControl: false })
     map.setView([31.95, 35.21], 11)
     createTileLayer({ maxZoom: 19 }).addTo(map)
+    attachAttribution(map)
     markerLayer.current = L.layerGroup().addTo(map)
     secondaryLayer.current = L.layerGroup().addTo(map)
     routeLayer.current = L.layerGroup().addTo(map)

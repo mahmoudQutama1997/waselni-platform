@@ -543,7 +543,7 @@ class MerchantProfileSelfView(APIView):
         if request.user.role != "merchant":
             raise PermissionDenied("Merchant account required.")
         profile = (MerchantProfile.objects
-                   .select_related("business_category__service")
+                   .select_related("business_category__service", "requested_business_category__service")
                    .filter(user=request.user).first())
         if profile is not None:
             return profile
@@ -588,6 +588,9 @@ class MerchantProfileSelfView(APIView):
         # Merchants may prepare/edit their draft store before subscription activation.
         # Public visibility remains gated by MerchantViewSet and subscription state.
         data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        activity_request = False
+        pending_activity = None
+        withdrawn_request = False
         if "business_category" in data:
             current = profile.business_category_id
             submitted = self.submitted_category_id(data["business_category"])
@@ -596,15 +599,30 @@ class MerchantProfileSelfView(APIView):
                 pass
             elif submitted is None or submitted == current:
                 # An unchanged or blank activity is not a change request: drop the
-                # key so the approved activity is never rewritten or cleared.
+                # key so the approved activity is never rewritten or cleared, and
+                # drop any pending request the merchant is withdrawing.
                 data.pop("business_category", None)
+                if profile.requested_business_category_id:
+                    withdrawn_request = True
             elif profile.is_approved:
-                raise PermissionDenied(
-                    "Changing the business activity of an approved store is done by Waselni administration."
-                )
+                # An approved store never re-writes its own activity. The choice is
+                # stored as a review request, and the current activity keeps selling
+                # until Waselni administration approves the move.
+                requested = BusinessCategory.objects.filter(pk=submitted, is_active=True).first()
+                if requested is None:
+                    raise ValidationError({"business_category": "Choose an active business activity."})
+                pending_activity = requested
+                data.pop("business_category", None)
+                activity_request = True
         serializer = MerchantProfileSerializer(profile, data=data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         profile = serializer.save()
+        # The activity request is written only after the rest of the form is valid,
+        # so a rejected field never leaves a half-saved review request behind.
+        if pending_activity is not None or withdrawn_request:
+            profile.requested_business_category = pending_activity
+            profile.activity_requested_at = timezone.now() if pending_activity is not None else None
+            profile.save(update_fields=["requested_business_category", "activity_requested_at"])
         updates = []
         if created:
             # Saving a brand new store is not an approval: it must always start
@@ -629,11 +647,19 @@ class MerchantProfileSelfView(APIView):
             profile.save(update_fields=updates)
         payload = MerchantProfileSerializer(profile, context={"request": request}).data
         payload["store_created"] = created
-        payload["message"] = (
-            "Store saved successfully. Your store is now awaiting administration approval."
-            if profile.approval_status == "pending"
-            else "Store profile saved successfully."
-        )
+        activity_request = activity_request or bool(profile.requested_business_category_id)
+        payload["activity_request_pending"] = activity_request
+        if activity_request:
+            payload["message"] = (
+                "Store saved. The activity change was sent to Waselni administration for review; "
+                "your current activity stays active until it is approved."
+            )
+        elif profile.approval_status == "pending":
+            payload["message"] = (
+                "Store saved successfully. Your store is now awaiting administration approval."
+            )
+        else:
+            payload["message"] = "Store profile saved successfully."
         return Response(payload, status=201 if created else 200)
 
 class MerchantViewSet(viewsets.ReadOnlyModelViewSet):

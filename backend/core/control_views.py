@@ -530,7 +530,7 @@ class AdminProvidersView(APIView):
         guard(request, "providers")
         status = request.query_params.get("status") or ""
         query = (request.query_params.get("q") or "").strip().lower()
-        qs = (MerchantProfile.objects.select_related("user", "business_category__service")
+        qs = (MerchantProfile.objects.select_related("user", "business_category__service", "requested_business_category__service")
               .prefetch_related("services", "branches").order_by("-created_at"))
         if status in dict(MerchantProfile.APPROVAL_STATES):
             qs = qs.filter(approval_status=status)
@@ -554,6 +554,8 @@ class AdminProvidersView(APIView):
                 "shop_name": store.shop_name,
                 "category": store.category,
                 "business_category": business_category_payload(store.business_category) if store.business_category_id else None,
+                "requested_business_category": (business_category_payload(store.requested_business_category)
+                                                if store.requested_business_category_id else None),
                 "service_type": store.service_type,
                 "address": store.address,
                 "latitude": float(store.latitude) if store.latitude is not None else None,
@@ -603,6 +605,18 @@ class AdminProvidersView(APIView):
                 store.reviewed_by = request.user
                 if status == "approved" and not store.is_open:
                     store.is_open = True
+                # An approved store may have asked for another activity while it was
+                # already trading. Approving the store is where that request lands:
+                # the stored activity is applied and the request is cleared.
+                if status == "approved" and store.requested_business_category_id:
+                    requested_activity = store.requested_business_category
+                    store.business_category = requested_activity
+                    store.category = requested_activity.code
+                    store.requested_business_category = None
+                    store.activity_requested_at = None
+                    if requested_activity.service_id:
+                        store.save()
+                        store.services.set([requested_activity.service.effective_service])
                 # Approving a store must put it in the service of its activity.
                 if status == "approved" and store.business_category_id and not store.services.exists():
                     service = store.business_category.service
@@ -625,6 +639,10 @@ class AdminProvidersView(APIView):
                         raise ValidationError({"business_category": "Choose a valid business activity."})
                     store.business_category = category
                     store.category = category.code
+                    # An administrator choosing the activity directly answers any
+                    # pending merchant request for a different one.
+                    store.requested_business_category = None
+                    store.activity_requested_at = None
             if "is_open" in data:
                 store.is_open = as_bool(data["is_open"]) and store.approval_status == "approved"
             if "temporarily_closed" in data:
@@ -635,6 +653,7 @@ class AdminProvidersView(APIView):
             after = {"approval_status": store.approval_status, "is_open": store.is_open,
                      "category": store.category, "rejection_reason": store.rejection_reason,
                      "business_category": store.business_category_id,
+                     "requested_business_category": store.requested_business_category_id,
                      "services": [s.code for s in store.services.all()]}
             record_audit(request.user, "provider.review", "merchant", store.id,
                          f"{store.shop_name}: {store.approval_status}", before=before, after=after)

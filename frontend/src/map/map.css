@@ -227,7 +227,7 @@
 
 .wm-legend {
   position: absolute;
-  bottom: 10px;
+  bottom: 34px;
   inset-inline-end: 10px;
   z-index: 500;
   display: flex;
@@ -262,7 +262,9 @@
 
 .wm-overlay {
   position: absolute;
-  inset: 0;
+  /* Stop above the attribution strip: the licence line must stay visible even
+     when the map has no points and shows the empty-state message. */
+  inset: 0 0 24px 0;
   z-index: 450;
   display: flex;
   align-items: center;
@@ -372,7 +374,7 @@
   .wm-captain .wm-label { display: inline-flex; max-width: 120px; }
   .wm-label b, .wm-label small { max-width: 104px; }
   /* Leave the bottom-right corner to Leaflet's attribution line. */
-  .wm-legend { font-size: 10px; gap: 4px 9px; padding: 6px 9px; bottom: 26px; max-width: calc(100% - 132px); }
+  .wm-legend { font-size: 10px; gap: 4px 9px; padding: 6px 9px; bottom: 34px; max-width: calc(100% - 24px); }
   /* Keep the distance/ETA chip beside the zoom controls, clear of both the
      legend and Leaflet's attribution line. */
   .wm-metrics {
@@ -404,6 +406,55 @@
   .wm-overlay { background: rgba(28, 20, 44, .86); color: #cbbfe0; }
   .wm-popup b { color: #f4effc; }
   .wm-popup p { color: #b8abc9; }
+}
+
+/* ------------------------------------------------ licence attribution strip
+   Leaflet renders the provider attribution inside the map, so it used to wrap
+   over the rounded edge and fight the legend and zoom buttons. It now owns a
+   small, tidy strip along the bottom edge: full text (OSM/Stadia stay credited),
+   left-to-right regardless of the page direction, and never clipped. */
+.wm-shell .leaflet-bottom.leaflet-right {
+  inset-inline-end: 0;
+  max-width: 100%;
+}
+.wm-shell .leaflet-bottom.leaflet-right .leaflet-control {
+  float: none;
+  display: flex;
+  justify-content: flex-end;
+}
+.wm-shell .leaflet-control-attribution {
+  margin: 0 8px 6px;
+  padding: 2px 8px;
+  max-width: calc(100% - 16px);
+  border-radius: 8px;
+  border: 1px solid var(--wm-line);
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 2px 7px rgba(40, 18, 70, .10);
+  color: var(--wm-muted);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: .01em;
+  direction: ltr;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.wm-shell .leaflet-control-attribution a {
+  color: #5a2c96;
+  font-weight: 600;
+  text-decoration: none;
+}
+.wm-shell .leaflet-control-attribution a:hover,
+.wm-shell .leaflet-control-attribution a:focus-visible {
+  text-decoration: underline;
+}
+@media (prefers-color-scheme: dark) {
+  .wm-shell .leaflet-control-attribution {
+    background: rgba(34, 24, 52, .94);
+    border-color: #4a3a66;
+    color: #cbbfe0;
+  }
+  .wm-shell .leaflet-control-attribution a { color: #c9aef7; }
 }
 
 /* Heading row shared by every portal's map card. */

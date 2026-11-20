@@ -108,15 +108,19 @@ class MerchantPublicSerializer(serializers.ModelSerializer):
 class MerchantProfileSerializer(serializers.ModelSerializer):
     service_type = serializers.CharField(read_only=True)
     business_category_code = serializers.SerializerMethodField()
+    requested_business_category_code = serializers.SerializerMethodField()
     is_approved = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = MerchantProfile
-        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "business_category", "business_category_code", "address", "latitude", "longitude", "opening_hours", "is_open", "temporarily_closed", "prep_minutes", "rating", "service_type", "approval_status", "is_approved", "rejection_reason", "created_at"]
-        read_only_fields = ["id", "is_open", "rating", "service_type", "approval_status", "is_approved", "rejection_reason", "created_at"]
+        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "business_category", "business_category_code", "requested_business_category", "requested_business_category_code", "activity_requested_at", "address", "latitude", "longitude", "opening_hours", "is_open", "temporarily_closed", "prep_minutes", "rating", "service_type", "approval_status", "is_approved", "rejection_reason", "created_at"]
+        read_only_fields = ["id", "is_open", "rating", "service_type", "approval_status", "is_approved", "rejection_reason", "requested_business_category", "activity_requested_at", "created_at"]
 
     def get_business_category_code(self, obj):
         return obj.business_category.code if obj.business_category_id else ""
+
+    def get_requested_business_category_code(self, obj):
+        return obj.requested_business_category.code if obj.requested_business_category_id else ""
 
     def validate_shop_name(self, value):
         value = str(value or "").strip()
