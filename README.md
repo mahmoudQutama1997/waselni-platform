@@ -84,6 +84,14 @@ Important: run `python manage.py createsuperuser` once to create the initial pla
 7. The assigned captain moves the order through picked_up → delivering → completed.
 8. Customer, merchant, captain and admin receive order events; screens also refresh every five seconds as a fallback.
 
+## Customer service workflows
+
+- The service directory links to service-specific restaurant, grocery and pharmacy storefronts. Store and product queries are filtered by approved/open merchants, subscription state, and service category; pharmacy products additionally require administrator approval and cannot be marked prescription-required or controlled.
+- Parcel requests use `POST /api/orders/service/parcel/`. Prices are computed on the server from `PARCEL_BASE_FARE`, `PARCEL_PRICE_PER_KM`, and `PARCEL_PRICE_PER_KG` (defaults 5.00, 2.00, and 0.50 ILS). The resulting order enters captain dispatch and uses the existing eligibility, proof, status, and order-history flows.
+- Special logistics uses `POST /api/orders/service/logistics/` to request a quote. An administrator with provider-review permission offers a price through `POST /api/orders/{id}/quote/`; only the owning customer can accept it, after which the shipment becomes dispatchable.
+- Pharmacy products start pending review. Use **Admin → Pharmacy product review** to approve only non-prescription, non-controlled products. Products that are not approved or require a prescription remain hidden and are rejected by checkout.
+- Scooter rides continue to use the existing `/api/orders/ride/` workflow. All coordinates and delivery fares remain validated server-side; maps and GPS availability depend on the configured map/geolocation providers.
+
 ## Main API endpoints
 
 - `POST /api/auth/register/` — disabled (accounts are created by platform administration)
@@ -95,6 +103,8 @@ Important: run `python manage.py createsuperuser` once to create the initial pla
 - `POST /api/admin/subscriptions/{id}/payments/` — record a manual subscription payment (admin only)
 - `POST /api/account/change-password/` — mandatory first-login password change
 - `POST /api/auth/token/` — obtain JWT tokens
+- `POST /api/auth/password-reset/` — request a generic password reset email response
+- `POST /api/auth/password-reset/confirm/` — set a new password with the one-time email token
 - `GET /api/me/` — current account
 - `GET /api/merchants/` — open merchants
 - `GET/POST /api/products/` — browse products / merchant catalog management
@@ -143,6 +153,8 @@ The admin operations map renders live store, active-order and captain positions 
 Public self-registration is disabled. The platform administrator creates customer, merchant and captain accounts from **Admin → Users** in the Waselni web app. The identity number is used as the login username and must be unique. Merchant creation also requires a store name; captain profiles are created automatically but remain unapproved until reviewed. A temporary password is generated if the administrator does not provide one. Share it securely; SMS/OTP delivery is not configured in this MVP.
 
 The admin can set a separate monthly subscription amount for each account, choose its start date and duration, and record payments. Each renewal is a separate historical subscription record. Merchant and captain accounts require an active subscription by default; customers do not, unless the administrator enables **subscription required** for that account. Expired/pending subscriptions prevent merchant/captain operational actions; accounts can still sign in so the user can contact administration. Subscription approval is separate from captain/store approval.
+
+Password recovery is available through a single-use, time-limited link sent to the account email. Production must configure `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, `DEFAULT_FROM_EMAIL`, and `PASSWORD_RESET_FRONTEND_URL` in the hosting environment; never commit these values. Email is optional on existing accounts, so an account without a usable email address must contact platform support. Enabling JWT password-revocation checks invalidates tokens issued before the release, requiring users to sign in again once.
 
 Migration files are included. For a fresh database, run `python manage.py migrate`. For an existing database from the previous Waselni MVP, back up `db.sqlite3` and run `python manage.py migrate --fake-initial` so Django recognizes the original tables and then adds the identity and subscription fields. Inspect the migration output; do not force it if your database schema differs from the original MVP.
 
@@ -250,6 +262,8 @@ Public registration is customer-only. Merchant and captain accounts are created 
 The `.env.example` files contain local development settings. Before deployment, set a unique `SECRET_KEY`, `DEBUG=False`, production `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, and a production `DATABASE_URL`. Set `REDIS_URL` for cross-instance WebSocket events and keep `SERVE_MEDIA=True` only when Django itself serves uploads. With `DEBUG=False`, HTTPS redirects, secure session and CSRF cookies, and HSTS are enabled by default. Terminate HTTPS at the web server or trusted proxy, and configure the proxy to set `X-Forwarded-Proto` correctly; `SECURE_PROXY_SSL_HEADER` is already enabled.
 
 Step-by-step PWA deployment (Render + Vercel), per-role environment values, health checks, and Arabic iPhone/Android installation instructions are in [`PWA_DEPLOYMENT_AND_INSTALL_AR.md`](PWA_DEPLOYMENT_AND_INSTALL_AR.md).
+
+Automatic completion after the customer's 12-hour confirmation window is currently disabled. The existing Render service is a Free web service, which spins down after 15 minutes without traffic; reliable scheduled work is not available on this plan. Order-list and dashboard requests do not trigger completion. Customers can still confirm receipt manually, and the `process_expired_order_confirmations` management command remains available for an explicitly operated job when a reliable scheduler is configured.
 
 The local SQLite database is not included in this source archive. Existing installations should back up their database and media before applying migrations. Do not use a fresh database setup command against an existing installation.
 

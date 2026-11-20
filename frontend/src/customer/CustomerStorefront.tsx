@@ -1,12 +1,17 @@
-import L from '../map/leaflet';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api, mediaUrl } from '../api';
+import { api, mediaUrl, roundCoordinate } from '../api';
+import DeliveryMap from '../map/DeliveryMap';
+import type { MapPoint } from '../map/DeliveryMap';
+import { makeMapLabels } from '../map/labels';
+import SafeImage from '../components/SafeImage';
+import ServiceIcon from '../components/ServiceIcon';
 import type { CartLine, Merchant, Order, Product } from './types';
-import { MAP_TILE_URL, MAP_ATTRIBUTION, GEOCODING_REVERSE_URL, GEOCODING_SEARCH_URL, geocodeUrl } from '../config';
+import { GEOCODING_REVERSE_URL, GEOCODING_SEARCH_URL, geocodeUrl } from '../config';
+import { makeCoalescedLoader, uniqueRows } from '../lib/polling';
 
-type Props = { lang: 'ar' | 'en' | 'he' };
+type Props = { lang: 'ar' | 'en' | 'he'; serviceCode?: 'food' | 'grocery' | 'pharmacy' };
 
 type Copy = {
   greeting: string;
@@ -37,6 +42,7 @@ type Copy = {
   remove: string;
   open: string;
   closed: string;
+  averageRating: string;
   category: string;
   storeHint: string;
   cartHint: string;
@@ -49,6 +55,42 @@ type Copy = {
   customerLocation: string;
   selectLocation: string;
   useLocation: string;
+  browseCategories: string;
+  services: string;
+  discover: string;
+  menu: string;
+  activity: string;
+  yourOrder: string;
+  storeService: string;
+  storeServiceHint: string;
+  rideService: string;
+  rideServiceHint: string;
+  viewCart: string;
+  orderStatus: string;
+  confirmReceipt: string;
+  completedAt: string;
+  receiptConfirmed: string;
+  paymentStatus: string;
+  cashStatus: string;
+  onlineNotIntegrated: string;
+  noOrders: string;
+  closedHint: string;
+  results: string;
+  searchAddress: string;
+  searchAction: string;
+  searching: string;
+  addressNotFound: string;
+  locationDenied: string;
+  locationUnsupported: string;
+  outOfStock: string;
+  lowStock: string;
+  stockLeft: string;
+  itemSoldOut: string;
+  cartStockAlert: string;
+  cartStockClamped: string;
+  maxReached: string;
+  stockShortfall: string;
+  stockUntracked: string;
 };
 
 const copy: Record<Props['lang'], Copy> = {
@@ -81,13 +123,50 @@ const copy: Record<Props['lang'], Copy> = {
     remove: 'حذف',
     open: 'مفتوح',
     closed: 'مغلق',
+    averageRating: 'متوسط التقييم',
     category: 'التصنيف',
     storeHint: 'اختر متجراً لعرض منتجاته',
     cartHint: 'يمكنك الطلب من متجر واحد في كل طلب.',
     orderError: 'تعذر إنشاء الطلب. حاول مرة أخرى.',
     chooseStore: 'اختر متجراً أولاً.',
     clearCart: 'إفراغ السلة',
-    deliveryFeeNote: 'حدد أجرة التوصيل التي تعرض على الكابتن؛ لا تُثبت إلا بعد موافقته.', deliveryFee: 'أجرة التوصيل المقترحة (₪)', storeLocation: 'موقع المتجر', customerLocation: 'حدد موقع استلام الطلب على الخريطة', selectLocation: 'اضغط على الخريطة لتحديد موقعك أو ابحث عن عنوانك.', useLocation: 'استخدم موقعي الحالي'
+    deliveryFeeNote: 'حدد أجرة التوصيل التي تعرض على الكابتن؛ لا تُثبت إلا بعد موافقته.', deliveryFee: 'أجرة التوصيل المقترحة (₪)', storeLocation: 'موقع المتجر', customerLocation: 'حدد موقع استلام الطلب على الخريطة', selectLocation: 'اضغط على الخريطة لتحديد موقعك أو ابحث عن عنوانك.', useLocation: 'استخدم موقعي الحالي',
+    browseCategories: 'تصفح التصنيفات',
+    services: 'خدمات وصلني',
+    discover: 'اكتشف',
+    menu: 'القائمة',
+    activity: 'النشاط',
+    yourOrder: 'طلبك',
+    storeService: 'توصيل المتاجر',
+    storeServiceHint: 'اطلب من متاجرك المفضلة',
+    rideService: 'ركوب الفسبا',
+    rideServiceHint: 'تنقل سريع داخل المدينة',
+    viewCart: 'عرض السلة',
+    orderStatus: 'حالة الطلب',
+    confirmReceipt: 'تأكيد استلام الطلب',
+    completedAt: 'وقت الإكمال',
+    receiptConfirmed: 'تم تأكيد استلام الطلب.',
+    paymentStatus: 'حالة الدفع',
+    cashStatus: 'الدفع نقداً للكابتن عند التسليم',
+    onlineNotIntegrated: 'الدفع الإلكتروني غير مفعّل؛ لم يتم تأكيد الدفع',
+    noOrders: 'لا توجد طلبات سابقة بعد.',
+    closedHint: 'هذا المتجر مغلق حالياً، يمكنك التصفح لكن الطلب قد يتأخر.',
+    results: 'نتيجة',
+    searchAddress: 'ابحث عن المدينة أو الشارع',
+    searchAction: 'بحث',
+    searching: 'جارٍ البحث...',
+    addressNotFound: 'لم يتم العثور على العنوان',
+    locationDenied: 'اسمح بالوصول إلى الموقع من المتصفح',
+    locationUnsupported: 'المتصفح لا يدعم تحديد الموقع',
+    outOfStock: 'نفدت الكمية',
+    lowStock: 'كمية محدودة',
+    stockLeft: 'المتوفر',
+    itemSoldOut: 'نفدت الكمية من هذا المنتج.',
+    cartStockAlert: 'نفدت الكمية من بعض منتجات سلتك وتم حذفها:',
+    cartStockClamped: 'تم تعديل الكميات حسب المتوفر في المتجر:',
+    maxReached: 'وصلت للحد الأقصى المتوفر من هذا المنتج.',
+    stockShortfall: 'الكمية غير كافية: {name} — المتوفر {count} فقط.',
+    stockUntracked: '{name} غير متاح للطلب حتى يحدد المتجر كميته.'
   },
 
   en: {
@@ -119,13 +198,50 @@ const copy: Record<Props['lang'], Copy> = {
     remove: 'Remove',
     open: 'Open',
     closed: 'Closed',
+    averageRating: 'Average rating',
     category: 'Category',
     storeHint: 'Choose a store to explore its products',
     cartHint: 'Orders can contain products from one store only.',
     orderError: 'Failed to place the order. Please try again.',
     chooseStore: 'Choose a store first.',
     clearCart: 'Clear cart',
-    deliveryFeeNote: 'Set your proposed delivery fee. It becomes final only after a captain accepts it.', deliveryFee: 'Proposed delivery fee (₪)', storeLocation: 'Store location', customerLocation: 'Choose your delivery location on the map', selectLocation: 'Click the map to set your location or search for an address.', useLocation: 'Use my current location'
+    deliveryFeeNote: 'Set your proposed delivery fee. It becomes final only after a captain accepts it.', deliveryFee: 'Proposed delivery fee (₪)', storeLocation: 'Store location', customerLocation: 'Choose your delivery location on the map', selectLocation: 'Click the map to set your location or search for an address.', useLocation: 'Use my current location',
+    browseCategories: 'Browse categories',
+    services: 'Waselni services',
+    discover: 'DISCOVER',
+    menu: 'MENU',
+    activity: 'ACTIVITY',
+    yourOrder: 'YOUR ORDER',
+    storeService: 'Store delivery',
+    storeServiceHint: 'Order from your favourite stores',
+    rideService: 'Scooter ride',
+    rideServiceHint: 'Quick rides around the city',
+    viewCart: 'View cart',
+    orderStatus: 'Order status',
+    confirmReceipt: 'Confirm order receipt',
+    completedAt: 'Completed at',
+    receiptConfirmed: 'Order receipt confirmed.',
+    paymentStatus: 'Payment status',
+    cashStatus: 'Cash payable to the captain on delivery',
+    onlineNotIntegrated: 'Online payment is not enabled; payment has not been verified',
+    noOrders: 'No previous orders yet.',
+    closedHint: 'This store is currently closed. You can browse, but the order may be delayed.',
+    results: 'results',
+    searchAddress: 'Search for a city or street',
+    searchAction: 'Search',
+    searching: 'Searching...',
+    addressNotFound: 'Address not found',
+    locationDenied: 'Allow location access from your browser',
+    locationUnsupported: 'Geolocation is not supported by this browser',
+    outOfStock: 'Out of stock',
+    lowStock: 'Low stock',
+    stockLeft: 'Available',
+    itemSoldOut: 'This item is out of stock.',
+    cartStockAlert: 'Some items sold out and were removed from your cart:',
+    cartStockClamped: 'Quantities were adjusted to the available stock:',
+    maxReached: 'You reached the maximum available quantity for this item.',
+    stockShortfall: 'Not enough stock: {name} — only {count} left.',
+    stockUntracked: '{name} cannot be ordered until the store sets its quantity.'
   },
 
   he: {
@@ -157,73 +273,193 @@ const copy: Record<Props['lang'], Copy> = {
     remove: 'הסרה',
     open: 'פתוח',
     closed: 'סגור',
+    averageRating: 'דירוג ממוצע',
     category: 'קטגוריה',
     storeHint: 'בחרו חנות כדי לצפות במוצרים',
     cartHint: 'ניתן להזמין ממקום אחד בכל הזמנה.',
     orderError: 'לא ניתן ליצור את ההזמנה. נסו שוב.',
     chooseStore: 'יש לבחור חנות תחילה.',
     clearCart: 'ריקון הסל',
-    deliveryFeeNote: 'קבעו דמי משלוח מוצעים. המחיר יאושר סופית רק לאחר שקברניט יקבל אותו.', deliveryFee: 'דמי משלוח מוצעים (₪)', storeLocation: 'מיקום החנות', customerLocation: 'בחרו את מיקום המסירה במפה', selectLocation: 'לחצו על המפה כדי לבחור מיקום או חפשו כתובת.', useLocation: 'השתמשו במיקום שלי'
+    deliveryFeeNote: 'קבעו דמי משלוח מוצעים. המחיר יאושר סופית רק לאחר שקברניט יקבל אותו.', deliveryFee: 'דמי משלוח מוצעים (₪)', storeLocation: 'מיקום החנות', customerLocation: 'בחרו את מיקום המסירה במפה', selectLocation: 'לחצו על המפה כדי לבחור מיקום או חפשו כתובת.', useLocation: 'השתמשו במיקום שלי',
+    browseCategories: 'עיון בקטגוריות',
+    services: 'שירותי وصلني',
+    discover: 'לגלות',
+    menu: 'תפריט',
+    activity: 'פעילות',
+    yourOrder: 'ההזמנה שלך',
+    storeService: 'משלוח מחנויות',
+    storeServiceHint: 'הזמינו מהחנויות האהובות עליכם',
+    rideService: 'נסיעת קטנוע',
+    rideServiceHint: 'נסיעות מהירות בעיר',
+    viewCart: 'לצפייה בסל',
+    orderStatus: 'מצב הזמנה',
+    confirmReceipt: 'אישור קבלת ההזמנה',
+    completedAt: 'הושלם בתאריך',
+    receiptConfirmed: 'קבלת ההזמנה אושרה.',
+    paymentStatus: 'מצב התשלום',
+    cashStatus: 'תשלום במזומן לשליח בעת המסירה',
+    onlineNotIntegrated: 'תשלום מקוון אינו פעיל; התשלום לא אומת',
+    noOrders: 'אין עדיין הזמנות קודמות.',
+    closedHint: 'החנות סגורה כעת. אפשר לעיין, אך ייתכן עיכוב בהזמנה.',
+    results: 'תוצאות',
+    searchAddress: 'חיפוש עיר או רחוב',
+    searchAction: 'חיפוש',
+    searching: 'מחפש...',
+    addressNotFound: 'הכתובת לא נמצאה',
+    locationDenied: 'יש לאשר גישה למיקום בדפדפן',
+    locationUnsupported: 'הדפדפן אינו תומך באיתור מיקום',
+    outOfStock: 'אזל מהמלאי',
+    lowStock: 'מלאי מוגבל',
+    stockLeft: 'זמין',
+    itemSoldOut: 'הפריט אזל מהמלאי.',
+    cartStockAlert: 'חלק מהפריטים אזלו והוסרו מהסל:',
+    cartStockClamped: 'הכמויות עודכנו לפי המלאי הזמין:',
+    maxReached: 'הגעתם לכמות המרבית הזמינה של פריט זה.',
+    stockShortfall: 'אין מספיק מלאי: {name} — נותרו {count} בלבד.',
+    stockUntracked: 'לא ניתן להזמין את {name} עד שהחנות תגדיר כמות.'
   }
+};
+
+const ORDER_STATUS: Record<Props['lang'], Record<string, string>> = {
+  ar: { new: 'جديد', accepted: 'مقبول', preparing: 'قيد التجهيز', ready: 'جاهز', assigned: 'تم تعيين كابتن', picked_up: 'تم الاستلام', delivering: 'قيد التوصيل', awaiting_confirmation: 'بانتظار تأكيد الزبون', completed: 'مكتمل', cancelled: 'ملغي' },
+  en: { new: 'New', accepted: 'Accepted', preparing: 'Preparing', ready: 'Ready', assigned: 'Captain assigned', picked_up: 'Picked up', delivering: 'Delivering', awaiting_confirmation: 'Awaiting customer confirmation', completed: 'Completed', cancelled: 'Cancelled' },
+  he: { new: 'חדש', accepted: 'אושר', preparing: 'בהכנה', ready: 'מוכן', assigned: 'שליח שובץ', picked_up: 'נאסף', delivering: 'במשלוח', awaiting_confirmation: 'ממתין לאישור הלקוח', completed: 'הושלם', cancelled: 'בוטל' }
 };
 
 const money = (value: string | number) =>
   `${Number(value || 0).toFixed(2)} ₪`;
 
+const statusTone = (status: string) =>
+  status === 'cancelled'
+    ? 'is-cancelled'
+    : status === 'completed'
+      ? 'is-done'
+      : status === 'new'
+        ? 'is-new'
+        : 'is-live';
+
+type StockState = 'untracked' | 'out' | 'low' | 'in';
+
+const stockState = (product: Product): StockState =>
+  product.stock_status ||
+  (typeof product.quantity === 'number'
+    ? product.quantity <= 0
+      ? 'out'
+      : product.quantity <= (product.low_stock_threshold ?? 5)
+        ? 'low'
+        : 'in'
+    : 'untracked');
+
+const stockLimit = (product: Product): number | null =>
+  typeof product.quantity === 'number' ? Math.max(0, product.quantity) : 0;
+
+// An unset count is not "unlimited": the backend refuses to sell it, so the
+// storefront must show it as unavailable instead of letting the customer add it.
+const isSoldOut = (product: Product) =>
+  product.available === false ||
+  stockState(product) === 'out' ||
+  stockState(product) === 'untracked';
+
+type StockShortfall = {
+  product_id: number;
+  name: string;
+  available: number;
+  requested: number;
+  reason?: 'shortage' | 'untracked';
+};
+
+const stockErrorMessage = (
+  payload: unknown,
+  t: Copy
+): string | null => {
+  const stock = (payload as { stock?: StockShortfall[] } | null)?.stock;
+  if (!Array.isArray(stock) || !stock.length) return null;
+  return stock
+    .map(row =>
+      (row.reason === 'untracked' ? t.stockUntracked : t.stockShortfall)
+        .replace('{name}', row.name)
+        .replace('{count}', String(row.available))
+    )
+    .join(' — ');
+};
+
+
 const readCart = (): CartLine[] => {
   try {
-    return JSON.parse(
+    const raw = JSON.parse(
       localStorage.getItem('waselni_customer_cart') || '[]'
-    ) as CartLine[];
+    ) as unknown;
+    // The cart outlives app versions and is shared by every store service, so a
+    // line written by an older build, another tab or an interrupted write may
+    // be unusable. A single broken line must not blank the whole service page:
+    // keep only lines that still carry a real product and a valid quantity.
+    return (Array.isArray(raw) ? raw : []).flatMap(line => {
+      const entry = line as Partial<CartLine> | null;
+      const product = entry?.product;
+      const quantity = Number(entry?.quantity);
+      if (!product || typeof product !== 'object') return [];
+      if (product.id == null || product.merchant == null) return [];
+      if (!Number.isFinite(quantity) || quantity <= 0) return [];
+      return [{ product, quantity: Math.max(1, Math.floor(quantity)) }];
+    });
   } catch {
     return [];
   }
 };
 
-const rows = <T,>(value: unknown): T[] =>
-  Array.isArray(value)
-    ? value as T[]
+const rows = <T,>(value: unknown): T[] => {
+  const list = Array.isArray(value)
+    ? (value as T[])
     : ((value as { results?: T[] })?.results || []);
+  // A list response can contain a hole or a non-object row after a backend or
+  // proxy failure; rendering it would throw inside `merchant.shop_name`.
+  return uniqueRows(
+    (Array.isArray(list) ? list : []).filter(
+      row => row !== null && typeof row === 'object'
+    )
+  ) as T[];
+};
 
 function CheckoutLocationMap({ merchant, latitude, longitude, onSelect, t }: { merchant: Merchant | null; latitude: number | null; longitude: number | null; onSelect: (lat: number, lng: number, address?: string) => void; t: Copy }) {
-  const mapRef = useRef<HTMLDivElement | null>(null);
-  const mapInstance = useRef<any>(null);
-  const customerMarker = useRef<any>(null);
-  const storeMarker = useRef<any>(null);
   const [query, setQuery] = useState('');
   const [mapError, setMapError] = useState('');
-  useEffect(() => {
-    if (!L || !mapRef.current || mapInstance.current) return;
-    const map = L.map(mapRef.current, { scrollWheelZoom: false }).setView([31.95, 35.21], 12);
-    L.tileLayer(MAP_TILE_URL, { maxZoom: 19, attribution: MAP_ATTRIBUTION }).addTo(map);
-    map.on('click', (event: any) => select(event.latlng.lat, event.latlng.lng));
-    mapInstance.current = map;
-    const timer = window.setTimeout(() => map.invalidateSize(), 180);
-    return () => { window.clearTimeout(timer); map.remove(); mapInstance.current = null; customerMarker.current = null; storeMarker.current = null; };
-  }, []);
-  useEffect(() => {
-    const map = mapInstance.current;
-if (!map) return;
-    if (!L || !map) return;
-    if (merchant?.latitude != null && merchant?.longitude != null) {
-      const point = [Number(merchant.latitude), Number(merchant.longitude)];
-      if (point.every(Number.isFinite)) {
-        if (storeMarker.current) storeMarker.current.setLatLng(point);
-        else storeMarker.current = L.circleMarker(point, { radius: 10, color: '#fff', weight: 3, fillColor: '#6b35a6', fillOpacity: 1 }).addTo(map).bindPopup(merchant.shop_name);
-      }
-    } else if (storeMarker.current) { map.removeLayer(storeMarker.current); storeMarker.current = null; }
-    if (latitude != null && longitude != null) {
-      const point = [latitude, longitude];
-      if (customerMarker.current) customerMarker.current.setLatLng(point);
-      else customerMarker.current = L.marker(point, { draggable: true }).addTo(map).bindPopup(t.customerLocation);
-      customerMarker.current.off('dragend').on('dragend', (event: any) => { const p = event.target.getLatLng(); select(p.lat, p.lng); });
-    } else if (customerMarker.current) { map.removeLayer(customerMarker.current); customerMarker.current = null; }
-    const points: number[][] = [];
-    if (merchant?.latitude != null && merchant?.longitude != null) points.push([Number(merchant.latitude), Number(merchant.longitude)]);
-    if (latitude != null && longitude != null) points.push([latitude, longitude]);
-    if (points.length > 1) map.fitBounds(points, { padding: [35, 35], maxZoom: 15 });
-    else if (points.length) map.setView(points[0], 15);
-  }, [merchant?.latitude, merchant?.longitude, merchant?.shop_name, latitude, longitude, t.customerLocation]);
+  const [searching, setSearching] = useState(false);
+  const [recenterKey, setRecenterKey] = useState(0);
+  const labels = makeMapLabels(t as unknown as Record<string, unknown>, (document.documentElement.lang || 'ar') as 'ar' | 'en' | 'he', 'customer');
+  const storeLat = merchant?.latitude != null ? Number(merchant.latitude) : null;
+  const storeLng = merchant?.longitude != null ? Number(merchant.longitude) : null;
+  const hasStore = storeLat != null && storeLng != null && Number.isFinite(storeLat) && Number.isFinite(storeLng);
+  const hasDrop = latitude != null && longitude != null && Number.isFinite(latitude) && Number.isFinite(longitude);
+
+  // Only the chosen store and the delivery point are drawn; the shop keeps its
+  // real name and logo so the customer recognises where the order comes from.
+  const points: MapPoint[] = [];
+  if (hasStore) {
+    points.push({
+      id: 'store',
+      kind: 'store',
+      lat: storeLat,
+      lng: storeLng,
+      label: merchant?.shop_name || labels.store,
+      sublabel: merchant?.address || '',
+      popup: { title: merchant?.shop_name || labels.store, lines: [merchant?.address] },
+    });
+  }
+  if (hasDrop) {
+    points.push({
+      id: 'customer',
+      kind: 'customer',
+      lat: latitude,
+      lng: longitude,
+      label: t.customerLocation,
+      draggable: true,
+      popup: { title: t.customerLocation, lines: [t.selectLocation] },
+    });
+  }
+  const route = hasStore && hasDrop
+    ? { from: [storeLat as number, storeLng as number] as [number, number], to: [Number(latitude), Number(longitude)] as [number, number] }
+    : null;
+
   async function select(lat: number, lng: number) {
     onSelect(lat, lng);
     try {
@@ -231,34 +467,70 @@ if (!map) return;
       if (response.ok) { const data = await response.json(); if (data.display_name) onSelect(lat, lng, data.display_name); }
     } catch { /* Coordinates remain usable if reverse geocoding is unavailable. */ }
   }
-  async function search() {
-    if (!query.trim()) return;
+  async function search(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault(); if (!query.trim() || searching) return;
+    setSearching(true);
     try {
       setMapError('');
       const response = await fetch(geocodeUrl(GEOCODING_SEARCH_URL, { format: 'jsonv2', limit: 1, q: query }));
-      if (!response.ok) throw new Error('تعذر البحث عن العنوان');
-      const results = await response.json(); if (!results.length) throw new Error('لم يتم العثور على العنوان');
+      if (!response.ok) throw new Error(t.addressNotFound);
+      const results = await response.json(); if (!results.length) throw new Error(t.addressNotFound);
       const lat = Number(results[0].lat), lng = Number(results[0].lon);
-      onSelect(lat, lng, results[0].display_name || query); mapInstance.current?.setView([lat, lng], 16);
-    } catch (error) { setMapError(error instanceof Error ? error.message : 'تعذر تحديد الموقع'); }
+      onSelect(lat, lng, results[0].display_name || query);
+      setRecenterKey(key => key + 1);
+    } catch (error) { setMapError(error instanceof Error ? error.message : t.addressNotFound); }
+    finally { setSearching(false); }
   }
   function locate() {
-    if (!navigator.geolocation) { setMapError('المتصفح لا يدعم تحديد الموقع'); return; }
-    navigator.geolocation.getCurrentPosition(position => { const { latitude: lat, longitude: lng } = position.coords; select(lat, lng); mapInstance.current?.setView([lat, lng], 16); setMapError(''); }, () => setMapError('اسمح بالوصول إلى الموقع من المتصفح'), { enableHighAccuracy: true, timeout: 12000 });
+    if (!navigator.geolocation) { setMapError(t.locationUnsupported); return; }
+    navigator.geolocation.getCurrentPosition(
+      position => { const { latitude: lat, longitude: lng } = position.coords; select(lat, lng); setRecenterKey(key => key + 1); setMapError(''); },
+      () => setMapError(t.locationDenied),
+      { enableHighAccuracy: true, timeout: 12000 },
+    );
   }
-  return <div className="checkout-location-wrap"><div className="checkout-location-tools"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(); } }} placeholder="ابحث عن المدينة أو الشارع"/><button type="button" onClick={() => search()}>بحث</button><button type="button" className="secondary" onClick={locate}>{t.useLocation}</button></div><div ref={mapRef} className="checkout-location-map"/><p className="muted-note">{t.selectLocation} {merchant ? `${t.storeLocation}: ${merchant.shop_name}` : ''}</p><div className="checkout-map-legend"><span><i className="checkout-store-dot"/> {t.storeLocation}</span><span><i className="checkout-customer-dot"/> {t.customerLocation}</span></div>{latitude != null && longitude != null && <small>{latitude.toFixed(6)}, {longitude.toFixed(6)}</small>}{mapError && <p className="error">{mapError}</p>}</div>;
+  return <div className="checkout-location-wrap">
+    <div className="checkout-location-tools">
+      <input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(); } }} placeholder={t.searchAddress}/>
+      <button type="button" disabled={searching} onClick={() => search()}>{searching ? t.searching : t.searchAction}</button>
+      <button type="button" className="secondary" onClick={locate}>{t.useLocation}</button>
+    </div>
+    <DeliveryMap
+      points={points}
+      route={route}
+      labels={labels}
+      legend={[{ kind: 'store', label: t.storeLocation }, { kind: 'customer', label: t.customerLocation }]}
+      height={330}
+      fitKey={[merchant?.id || '', recenterKey].join('-')}
+      emptyText={t.selectLocation}
+      onPointMove={(id, lat, lng) => { if (id === 'customer') select(lat, lng); }}
+    />
+    <p className="muted-note">{t.selectLocation} {merchant ? `${t.storeLocation}: ${merchant.shop_name}` : ''}</p>
+    {latitude != null && longitude != null && <small dir="ltr">{latitude.toFixed(6)}, {longitude.toFixed(6)}</small>}
+    {mapError && <p className="error">{mapError}</p>}
+  </div>;
 }
 
-export default function CustomerStorefront({ lang }: Props) {
+export default function CustomerStorefront({ lang, serviceCode }: Props) {
   const t = copy[lang];
   const rtl = lang !== 'en';
+  const branchText = lang === 'ar' ? 'الفرع' : lang === 'he' ? 'סניף' : 'Branch';
+  const branchChoose =
+    lang === 'ar' ? 'اختر الفرع' : lang === 'he' ? 'בחרו סניף' : 'Choose a branch';
 
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState('');
+  const [ordersReload, setOrdersReload] = useState(0);
   const [selectedMerchant, setSelectedMerchant] = useState<number | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState<number | null>(null);
   const [cart, setCart] = useState<CartLine[]>(readCart);
   const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('');
+  const [addedId, setAddedId] = useState<number | null>(null);
+  const cartPanelRef = useRef<HTMLElement | null>(null);
   const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [dropoffLat, setDropoffLat] = useState<number | null>(null);
@@ -267,33 +539,82 @@ export default function CustomerStorefront({ lang }: Props) {
   const [loadingStores, setLoadingStores] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmingOrderId, setConfirmingOrderId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
     let alive = true;
 
-    api('/merchants/')
+    // Administration can approve, open or close a store while the customer keeps
+    // the page open, so the catalogue refreshes on a timer and when the tab comes
+    // back instead of needing an app rebuild or a manual reload.
+    const loadStores = () =>
+      api(`/merchants/${serviceCode ? `?service=${encodeURIComponent(serviceCode)}` : ''}`)
+        .then(data => {
+          if (alive) {
+            setMerchants(rows<Merchant>(data));
+            setError('');
+          }
+        })
+        .catch(e => {
+          if (alive) setError(e.message || t.orderError);
+        })
+        .finally(() => {
+          if (alive) setLoadingStores(false);
+        });
+    const refreshStores = makeCoalescedLoader(loadStores, { minGap: 5000 });
+    refreshStores();
+    const storeTimer = setInterval(refreshStores, 30000);
+    const refreshStoresWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshStores();
+    };
+    window.addEventListener('focus', refreshStoresWhenVisible);
+    document.addEventListener('visibilitychange', refreshStoresWhenVisible);
+
+    const loadOrders = () => api('/orders/')
       .then(data => {
-        if (alive) setMerchants(rows<Merchant>(data));
+        if (alive) {
+          setOrders(rows<Order>(data).slice(0, 3));
+          setOrdersError('');
+        }
       })
       .catch(e => {
-        if (alive) setError(e.message || t.orderError);
+        if (alive) setOrdersError(e.message || t.orderError);
       })
       .finally(() => {
-        if (alive) setLoadingStores(false);
+        if (alive) setOrdersLoading(false);
       });
-
-    api('/orders/')
-      .then(data => {
-        if (alive) setOrders(rows<Order>(data).slice(0, 3));
-      })
-      .catch(() => undefined);
+    // Coalesced so the 5s fallback never stacks on a slow in-flight request.
+    const refreshOrders = makeCoalescedLoader(loadOrders, { minGap: 2000 });
+    refreshOrders();
+    const orderTimer = setInterval(refreshOrders, 5000);
 
     return () => {
       alive = false;
+      clearInterval(orderTimer);
+      clearInterval(storeTimer);
+      window.removeEventListener('focus', refreshStoresWhenVisible);
+      document.removeEventListener('visibilitychange', refreshStoresWhenVisible);
     };
-  }, [t.orderError]);
+  }, [t.orderError, ordersReload, serviceCode]);
+
+  async function confirmOrderReceipt(orderId: number) {
+    if (confirmingOrderId) return;
+    setConfirmingOrderId(orderId);
+    try {
+      await api(`/orders/${orderId}/status/`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'completed' })
+      });
+      setOrders(rows<Order>(await api('/orders/')).slice(0, 3));
+      setNotice(t.receiptConfirmed);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t.orderError);
+    } finally {
+      setConfirmingOrderId(null);
+    }
+  }
 
   useEffect(() => {
     localStorage.setItem('waselni_customer_cart', JSON.stringify(cart));
@@ -315,7 +636,7 @@ export default function CustomerStorefront({ lang }: Props) {
 
     setLoadingProducts(true);
 
-    api(`/products/?merchant=${selectedMerchant}`)
+    api(`/products/?merchant=${selectedMerchant}${serviceCode ? `&service=${encodeURIComponent(serviceCode)}` : ''}`)
       .then(data => {
         if (alive) {
           setProducts(
@@ -333,20 +654,45 @@ export default function CustomerStorefront({ lang }: Props) {
     return () => {
       alive = false;
     };
-  }, [selectedMerchant, t.orderError]);
+  }, [selectedMerchant, t.orderError, serviceCode]);
 
   const activeMerchant =
     merchants.find(m => m.id === selectedMerchant) || null;
 
+  const activeBranches = Array.isArray(activeMerchant?.branches)
+    ? activeMerchant!.branches!
+    : [];
+
+  // One branch needs no choice; a multi-branch store must send the exact
+  // branch so the order reaches the right kitchen or shelf.
+  useEffect(() => {
+    setSelectedBranch(
+      activeBranches.length === 1 ? activeBranches[0].id : null
+    );
+  }, [activeMerchant?.id]);
+
   const filteredMerchants = useMemo(
     () =>
-      merchants.filter(m =>
-        `${m.shop_name} ${m.category || ''}`
+      merchants.filter(m => {
+        const matchesSearch = `${m.shop_name} ${m.category || ''}`
           .toLowerCase()
-          .includes(search.toLowerCase())
-      ),
-    [merchants, search]
+          .includes(search.toLowerCase());
+        const matchesCategory = !category || m.category === category;
+        return matchesSearch && matchesCategory;
+      }),
+    [merchants, search, category]
   );
+
+  const categories = useMemo(() => {
+    const counts = new Map<string, number>();
+    merchants.forEach(m => {
+      const label = (m.category || '').trim();
+      if (label) counts.set(label, (counts.get(label) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8);
+  }, [merchants]);
 
   const filteredProducts = useMemo(
     () =>
@@ -360,14 +706,93 @@ export default function CustomerStorefront({ lang }: Props) {
 
   const subtotal = cart.reduce(
     (sum, line) =>
-      sum + Number(line.product.price) * line.quantity,
+      sum + Number(line.product?.price || 0) * Number(line.quantity || 0),
     0
   );
 
   const cartCount = cart.reduce(
-    (sum, line) => sum + line.quantity,
+    (sum, line) => sum + Number(line.quantity || 0),
     0
   );
+
+  const cartInvalid = cart.some(line => {
+    const limit = stockLimit(line.product);
+    return isSoldOut(line.product) || (limit != null && line.quantity > limit);
+  });
+
+  const cartRef = useRef(cart);
+  useEffect(() => {
+    cartRef.current = cart;
+  }, [cart]);
+
+  async function revalidateCart(announce: boolean) {
+    const current = cartRef.current;
+    const merchantId = current[0]?.product.merchant;
+    if (!merchantId) return true;
+
+    try {
+      const data = await api(`/products/?merchant=${merchantId}${serviceCode ? `&service=${encodeURIComponent(serviceCode)}` : ''}`);
+      const fresh = rows<Product>(data);
+      const byId = new Map(fresh.map(product => [product.id, product]));
+      const removed: string[] = [];
+      const clamped: string[] = [];
+      const next: CartLine[] = [];
+
+      current.forEach(line => {
+        const product = byId.get(line.product.id);
+        const limit = product ? stockLimit(product) : 0;
+
+        if (!product || isSoldOut(product) || limit === 0) {
+          removed.push(line.product.name);
+          return;
+        }
+
+        if (limit != null && line.quantity > limit) {
+          clamped.push(`${line.product.name} (${limit})`);
+          next.push({ product, quantity: limit });
+          return;
+        }
+
+        next.push({ product, quantity: line.quantity });
+      });
+
+      if (removed.length || clamped.length) {
+        setCart(next);
+        if (announce) {
+          setNotice('');
+          setError(
+            [
+              removed.length ? `${t.cartStockAlert} ${removed.join('، ')}` : '',
+              clamped.length ? `${t.cartStockClamped} ${clamped.join('، ')}` : ''
+            ]
+              .filter(Boolean)
+              .join(' — ')
+          );
+        }
+        return false;
+      }
+
+      setProducts(fresh.filter(product => product.available !== false));
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return;
+      // Tell the customer when returning to the tab removes or shrinks a cart
+      // line; unchanged carts announce nothing, so the alert never repeats.
+      void revalidateCart(true);
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [t, serviceCode]);
 
   function addProduct(product: Product) {
     if (
@@ -378,8 +803,26 @@ export default function CustomerStorefront({ lang }: Props) {
       return;
     }
 
+    if (isSoldOut(product)) {
+      setNotice('');
+      setError(`${product.name}: ${t.itemSoldOut}`);
+      return;
+    }
+
+    const limit = stockLimit(product);
+    const inCart =
+      cart.find(line => line.product.id === product.id)?.quantity || 0;
+
+    if (limit != null && inCart >= limit) {
+      setNotice('');
+      setError(`${product.name}: ${t.maxReached}`);
+      return;
+    }
+
     setError('');
     setNotice(t.added);
+    setAddedId(product.id);
+    window.setTimeout(() => setAddedId(current => (current === product.id ? null : current)), 1400);
 
     setCart(current => {
       const found = current.find(
@@ -387,11 +830,13 @@ export default function CustomerStorefront({ lang }: Props) {
       );
 
       if (found) {
+        const cap = limit == null ? 50 : Math.min(50, limit);
         return current.map(line =>
           line.product.id === product.id
             ? {
                 ...line,
-                quantity: Math.min(50, line.quantity + 1)
+                product,
+                quantity: Math.min(cap, line.quantity + 1)
               }
             : line
         );
@@ -402,16 +847,29 @@ export default function CustomerStorefront({ lang }: Props) {
   }
 
   function changeQuantity(id: number, delta: number) {
+    const line = cart.find(item => item.product.id === id);
+    if (!line) return;
+
+    const limit = stockLimit(line.product);
+
+    if (delta > 0 && limit != null && line.quantity >= limit) {
+      setError(t.maxReached);
+      return;
+    }
+
+    setError('');
+
     setCart(current =>
       current
-        .map(line =>
-          line.product.id === id
-            ? { ...line, quantity: line.quantity + delta }
-            : line
-        )
-        .filter(
-          line => line.quantity > 0 && line.quantity <= 50
-        )
+        .map(item => {
+          if (item.product.id !== id) return item;
+          const max = limit == null ? 50 : Math.min(50, limit);
+          return {
+            ...item,
+            quantity: Math.max(0, Math.min(max, item.quantity + delta))
+          };
+        })
+        .filter(item => item.quantity > 0)
     );
   }
 
@@ -424,27 +882,37 @@ export default function CustomerStorefront({ lang }: Props) {
     setError('');
     setNotice('');
 
+    const fresh = await revalidateCart(true);
+    if (!fresh) {
+      setSubmitting(false);
+      return;
+    }
+
     const key =
       globalThis.crypto?.randomUUID?.() ||
       `waselni-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    const merchantId = cart[0].product.merchant;
 
     try {
       const result = await api('/orders/', {
         method: 'POST',
         headers: { 'Idempotency-Key': key },
         body: JSON.stringify({
-          merchant: cart[0].product.merchant,
+          merchant: merchantId,
           items: cart.map(line => ({
             product_id: line.product.id,
             quantity: line.quantity
           })),
           dropoff_address: address.trim(),
-          dropoff_latitude: dropoffLat,
-          dropoff_longitude: dropoffLng,
+          dropoff_latitude: roundCoordinate(dropoffLat),
+          dropoff_longitude: roundCoordinate(dropoffLng),
           delivery_fee: deliveryFee,
           dropoff_notes: notes.trim(),
           payment_method: 'cash',
-          order_type: 'store'
+          order_type: 'store',
+          ...(serviceCode ? { service_code: serviceCode } : {}),
+          ...(selectedBranch ? { branch: selectedBranch } : {})
         })
       });
 
@@ -453,14 +921,21 @@ export default function CustomerStorefront({ lang }: Props) {
       setDropoffLat(null);
       setDropoffLng(null);
       setNotes('');
-      setNotice(`${t.success} #${result.id}`);
+      setNotice(`${t.success} #${result.order_number}`);
 
       const latest = await api('/orders/');
       setOrders(rows<Order>(latest).slice(0, 3));
+      // The order just consumed stock; refresh the shelf so the remaining
+      // count drops immediately instead of waiting for the next focus event.
+      void api(`/products/?merchant=${merchantId}${serviceCode ? `&service=${encodeURIComponent(serviceCode)}` : ''}`)
+        .then(data => setProducts(rows<Product>(data).filter(product => product.available !== false)))
+        .catch(() => undefined);
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : t.orderError
+      const stockMessage = stockErrorMessage(
+        e instanceof Error ? (e as Error & { data?: unknown }).data : null,
+        t
       );
+      setError(stockMessage || (e instanceof Error ? e.message : t.orderError));
     } finally {
       setSubmitting(false);
     }
@@ -473,8 +948,10 @@ export default function CustomerStorefront({ lang }: Props) {
           <span className="customer-v2-kicker">
             WASELNI · PALESTINE
           </span>
-          <h1>{t.greeting}</h1>
-          <p>{t.subtitle}</p>
+          <h1>{serviceCode === 'food' ? (lang === 'en' ? 'Restaurants & food' : lang === 'he' ? 'מסעדות ואוכל' : 'المطاعم وتوصيل الطعام') :
+            serviceCode === 'grocery' ? (lang === 'en' ? 'Groceries & supermarkets' : lang === 'he' ? 'מכולות וסופרמרקטים' : 'السوبرماركت والبقالة') :
+            serviceCode === 'pharmacy' ? (lang === 'en' ? 'Pharmacies' : lang === 'he' ? 'בתי מרקחת' : 'الصيدليات') : t.greeting}</h1>
+          <p>{serviceCode ? t.storeHint : t.subtitle}</p>
 
           <div className="customer-v2-search">
             <span aria-hidden="true">⌕</span>
@@ -485,6 +962,29 @@ export default function CustomerStorefront({ lang }: Props) {
               aria-label={t.search}
             />
           </div>
+
+          <nav className="customer-v2-services" aria-label={t.services}>
+            <a
+              className="customer-v2-service customer-v2-service--store"
+              href="#stores"
+            >
+              <ServiceIcon name="store" size="lg" />
+              <span>
+                <b>{t.storeService}</b>
+                <small>{t.storeServiceHint}</small>
+              </span>
+            </a>
+            <Link
+              className="customer-v2-service customer-v2-service--ride"
+              to="/ride"
+            >
+              <ServiceIcon name="vespa" size="lg" />
+              <span>
+                <b>{t.rideService}</b>
+                <small>{t.rideServiceHint}</small>
+              </span>
+            </Link>
+          </nav>
         </div>
 
         <div className="customer-v2-hero-art" aria-hidden="true">
@@ -497,11 +997,13 @@ export default function CustomerStorefront({ lang }: Props) {
 
       <div className="customer-v2-layout">
         <main className="customer-v2-main">
-          <section className="customer-v2-section">
+          <section className="customer-v2-section" id="stores">
             <div className="customer-v2-heading">
               <div>
-                <span className="customer-v2-eyebrow">DISCOVER</span>
-                <h2>{t.stores}</h2>
+                <span className="customer-v2-eyebrow">{t.discover}</span>
+                <h2>{serviceCode === 'food' ? (lang === 'en' ? 'Available restaurants' : lang === 'he' ? 'מסעדות זמינות' : 'المطاعم المتاحة') :
+                  serviceCode === 'grocery' ? (lang === 'en' ? 'Available supermarkets' : lang === 'he' ? 'סופרמרקטים זמינים' : 'متاجر السوبرماركت المتاحة') :
+                  serviceCode === 'pharmacy' ? (lang === 'en' ? 'Available pharmacies' : lang === 'he' ? 'בתי מרקחת זמינים' : 'الصيدليات المتاحة') : t.stores}</h2>
                 <p>{t.storeHint}</p>
               </div>
               <span className="customer-v2-count">
@@ -509,8 +1011,42 @@ export default function CustomerStorefront({ lang }: Props) {
               </span>
             </div>
 
+            {categories.length > 0 && (
+              <div className="customer-v2-categories" aria-label={t.browseCategories}>
+                <button
+                  type="button"
+                  className={`customer-v2-category ${!category ? 'is-active' : ''}`}
+                  onClick={() => setCategory('')}
+                  aria-pressed={!category}
+                >
+                  {t.all} <b>{merchants.length}</b>
+                </button>
+                {categories.map(([label, count]) => (
+                  <button
+                    type="button"
+                    key={label}
+                    className={`customer-v2-category ${category === label ? 'is-active' : ''}`}
+                    onClick={() => setCategory(current => (current === label ? '' : label))}
+                    aria-pressed={category === label}
+                  >
+                    {label} <b>{count}</b>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {loadingStores ? (
-              <div className="customer-v2-loading">{t.loading}</div>
+              <div className="customer-v2-stores" aria-busy="true" aria-label={t.loading}>
+                {[0, 1, 2, 3].map(i => (
+                  <div className="customer-v2-skeleton-store" key={i}>
+                    <span className="skeleton sk-avatar" />
+                    <span className="sk-block">
+                      <span className="skeleton sk-line w-80" />
+                      <span className="skeleton sk-line w-40" />
+                    </span>
+                  </div>
+                ))}
+              </div>
             ) : filteredMerchants.length ? (
               <div className="customer-v2-stores">
                 {filteredMerchants.map(merchant => (
@@ -529,7 +1065,7 @@ export default function CustomerStorefront({ lang }: Props) {
                   >
                     <span className="customer-v2-store-image">
                       {merchant.image ? (
-                        <img src={mediaUrl(merchant.image)} alt="" />
+                        <SafeImage src={merchant.image} alt={merchant.shop_name} />
                       ) : (
                         <span>◈</span>
                       )}
@@ -537,7 +1073,12 @@ export default function CustomerStorefront({ lang }: Props) {
 
                     <span className="customer-v2-store-info">
                       <b>{merchant.shop_name}</b>
-                      <small>{merchant.category || t.category}</small>
+                      <small>
+                        {lang === 'ar'
+                          ? merchant.business_category_name_ar || merchant.category || t.category
+                          : merchant.business_category_name_en || merchant.business_category_name_ar || merchant.category || t.category}
+                      </small>
+                      {merchant.rating != null && <small>★ {merchant.rating} / 5 · {t.averageRating}</small>}
                       <em className={merchant.is_open ? 'is-open' : 'is-closed'}>
                         {merchant.is_open ? t.open : t.closed}
                       </em>
@@ -549,16 +1090,17 @@ export default function CustomerStorefront({ lang }: Props) {
               </div>
             ) : (
               <p className="customer-v2-empty">
-                {search ? t.searchEmpty : t.noStores}
+                {search || category ? t.searchEmpty : t.noStores}
               </p>
             )}
-            {activeMerchant && <div className="customer-v2-store-location"><b>{t.storeLocation}: {activeMerchant.shop_name}</b><small>{activeMerchant.address || '—'}</small>{activeMerchant.latitude == null || activeMerchant.longitude == null ? <p className="customer-v2-fee-note">المتجر لم يحدد موقعه على الخريطة بعد؛ لا يمكن إرسال طلب توصيل إليه.</p> : <a target="_blank" rel="noreferrer" href={`https://www.openstreetmap.org/?mlat=${activeMerchant.latitude}&mlon=${activeMerchant.longitude}#map=16/${activeMerchant.latitude}/${activeMerchant.longitude}`}>عرض موقع المتجر على الخريطة</a>}</div>}
+            {activeMerchant && <div className="customer-v2-store-location"><b>{t.storeLocation}: {activeMerchant.shop_name}</b><small>{activeMerchant.address || '—'}</small>{activeMerchant.latitude == null || activeMerchant.longitude == null ? <p className="customer-v2-fee-note">{lang === 'ar' ? 'المتجر لم يحدد موقعه على الخريطة بعد؛ لا يمكن إرسال طلب توصيل إليه.' : lang === 'he' ? 'החנות טרם סימנה את מיקומה במפה; לא ניתן לשלוח אליה הזמנת משלוח.' : 'The store has not set its map location yet, so delivery orders cannot be sent to it.'}</p> : <a target="_blank" rel="noreferrer" href={`https://www.openstreetmap.org/?mlat=${activeMerchant.latitude}&mlon=${activeMerchant.longitude}#map=16/${activeMerchant.latitude}/${activeMerchant.longitude}`}>{lang === 'ar' ? 'عرض موقع المتجر على الخريطة' : lang === 'he' ? 'הצגת מיקום החנות במפה' : 'View store location on the map'}</a>}</div>}
+            {activeMerchant && !activeMerchant.is_open && <p className="customer-v2-feedback is-error">{t.closedHint}</p>}
           </section>
 
           <section className="customer-v2-section">
             <div className="customer-v2-heading">
               <div>
-                <span className="customer-v2-eyebrow">MENU</span>
+                <span className="customer-v2-eyebrow">{t.menu}</span>
                 <h2>{activeMerchant?.shop_name || t.products}</h2>
                 <p>{t.products}</p>
               </div>
@@ -570,7 +1112,18 @@ export default function CustomerStorefront({ lang }: Props) {
                 <p>{t.storeHint}</p>
               </div>
             ) : loadingProducts ? (
-              <div className="customer-v2-loading">{t.loading}</div>
+              <div className="customer-v2-products" aria-busy="true" aria-label={t.loading}>
+                {[0, 1, 2].map(i => (
+                  <div className="customer-v2-skeleton-product" key={i}>
+                    <span className="skeleton" />
+                    <div>
+                      <span className="skeleton sk-line w-40" />
+                      <span className="skeleton sk-line w-80" />
+                      <span className="skeleton sk-line w-60" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : filteredProducts.length ? (
               <div className="customer-v2-products">
                 {filteredProducts.map(product => (
@@ -580,10 +1133,9 @@ export default function CustomerStorefront({ lang }: Props) {
                   >
                     <div className="customer-v2-product-image">
                       {product.image ? (
-                        <img
-                          src={mediaUrl(product.image)}
+                        <SafeImage
+                          src={product.image}
                           alt={product.name}
-                          loading="lazy"
                         />
                       ) : (
                         <span>◫</span>
@@ -601,9 +1153,33 @@ export default function CustomerStorefront({ lang }: Props) {
                       )}
 
                       <div className="customer-v2-product-footer">
-                        <b>{money(product.price)}</b>
-                        <button onClick={() => addProduct(product)}>
-                          {t.add} <span>＋</span>
+                        <div className="customer-v2-price-stack">
+                          <b>{money(product.price)}</b>
+                          {stockState(product) === 'out' ? (
+                            <small className="stock-badge is-out">{t.outOfStock}</small>
+                          ) : stockState(product) === 'low' ? (
+                            <small className="stock-badge is-low">
+                              {t.lowStock} · {t.stockLeft} {product.quantity}
+                            </small>
+                          ) : null}
+                        </div>
+                        <button
+                          className={addedId === product.id ? 'is-added' : ''}
+                          disabled={isSoldOut(product)}
+                          onClick={() => addProduct(product)}
+                        >
+                          {isSoldOut(product)
+                            ? t.outOfStock
+                            : addedId === product.id
+                              ? t.added
+                              : t.add}
+                          <span>
+                            {isSoldOut(product)
+                              ? '✕'
+                              : addedId === product.id
+                                ? '✓'
+                                : '＋'}
+                          </span>
                         </button>
                       </div>
                     </div>
@@ -611,46 +1187,72 @@ export default function CustomerStorefront({ lang }: Props) {
                 ))}
               </div>
             ) : (
-              <p className="customer-v2-empty">{t.noProducts}</p>
+              <p className="customer-v2-empty">
+                {search ? t.searchEmpty : t.noProducts}
+              </p>
             )}
           </section>
 
           <section className="customer-v2-section customer-v2-recent">
             <div className="customer-v2-heading">
               <div>
-                <span className="customer-v2-eyebrow">ACTIVITY</span>
+                <span className="customer-v2-eyebrow">{t.activity}</span>
                 <h2>{t.orders}</h2>
               </div>
             </div>
 
-            {orders.length ? (
+            {ordersLoading ? (
+              <p className="customer-v2-loading">{t.loading}</p>
+            ) : ordersError ? (
+              <p className="error">{ordersError} <button type="button" className="secondary" onClick={() => { setOrdersLoading(true); setOrdersReload(value => value + 1); }}>{t.retry}</button></p>
+            ) : orders.length ? (
               <div className="customer-v2-order-list">
                 {orders.map(order => (
                   <div className="customer-v2-order" key={order.id}>
                     <span className="customer-v2-order-icon">↗</span>
                     <div>
                       <b>
-                        #{order.id} · {order.merchant_name || 'WASELNI'}
+                        {order.order_number} · {order.merchant_name || 'WASELNI'}
                       </b>
                       <small>
-                        {order.dropoff_address || order.status}
+                        {order.dropoff_address || t.orderStatus}
                       </small>
                     </div>
+                    <span className={`customer-v2-order-status ${statusTone(order.status)}`}>
+                      {ORDER_STATUS[lang][order.status] || order.status}
+                    </span>
                     <strong>{money(order.total)}</strong>
+                    <small>{t.paymentStatus}: {order.payment_method === 'cash' ? t.cashStatus : t.onlineNotIntegrated}</small>
+                    {order.completed_at && <small>{t.completedAt}: {new Date(order.completed_at).toLocaleString(lang)}</small>}
+                    {order.status === 'awaiting_confirmation' && (
+                      <button
+                        type="button"
+                        disabled={confirmingOrderId === order.id}
+                        onClick={() => confirmOrderReceipt(order.id)}
+                      >
+                        {confirmingOrderId === order.id ? t.loading : t.confirmReceipt}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="customer-v2-empty">—</p>
+              <p className="customer-v2-empty">{t.noOrders}</p>
             )}
-            <Link className="customer-v2-track-link" to="/orders">عرض حالة الطلبات وتتبع الكابتن على الخريطة ←</Link>
+            <Link className="customer-v2-track-link" to="/orders">
+              {lang === 'ar'
+                ? 'عرض حالة الطلبات وتتبع الكابتن على الخريطة ←'
+                : lang === 'he'
+                  ? 'לצפייה במצב ההזמנות ומעקב השליח במפה ←'
+                  : 'View order status and track the captain on the map ←'}
+            </Link>
           </section>
         </main>
 
-        <aside className="customer-v2-cart-panel">
+        <aside className="customer-v2-cart-panel" ref={cartPanelRef} id="customer-cart">
           <div className="customer-v2-cart-title">
             <div>
-              <span className="customer-v2-eyebrow">YOUR ORDER</span>
+              <span className="customer-v2-eyebrow">{t.yourOrder}</span>
               <h2>{t.cart}</h2>
             </div>
 
@@ -673,14 +1275,23 @@ export default function CustomerStorefront({ lang }: Props) {
 
           {cart.length ? (
             <div className="customer-v2-cart-lines">
-              {cart.map(line => (
+              {cart.map(line => {
+                const limit = stockLimit(line.product);
+                return (
                 <div
                   className="customer-v2-cart-line"
                   key={line.product.id}
                 >
                   <div className="customer-v2-cart-line-main">
                     <b>{line.product.name}</b>
-                    <small>{money(line.product.price)}</small>
+                    <small>
+                      {money(line.product.price)}
+                      {limit != null && (
+                        <span className="customer-v2-line-stock">
+                          {' '}· {t.stockLeft} {limit}
+                        </span>
+                      )}
+                    </small>
                   </div>
 
                   <div className="customer-v2-qty">
@@ -696,6 +1307,7 @@ export default function CustomerStorefront({ lang }: Props) {
                     <span>{line.quantity}</span>
 
                     <button
+                      disabled={limit != null && line.quantity >= limit}
                       onClick={() =>
                         changeQuantity(line.product.id, 1)
                       }
@@ -705,7 +1317,9 @@ export default function CustomerStorefront({ lang }: Props) {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
+
             </div>
           ) : (
             <div className="customer-v2-cart-empty">
@@ -749,6 +1363,27 @@ export default function CustomerStorefront({ lang }: Props) {
               <input type="number" min="0.50" max="500" step="0.50" required value={deliveryFee} onChange={event => setDeliveryFee(event.target.value)}/>
             </label>
             <p className="customer-v2-fee-note">{t.deliveryFeeNote}</p>
+            {activeBranches.length > 1 && (
+              <label>
+                {branchText}
+                <select
+                  required
+                  value={selectedBranch ?? ''}
+                  onChange={event =>
+                    setSelectedBranch(
+                      event.target.value ? Number(event.target.value) : null
+                    )
+                  }
+                >
+                  <option value="">{branchChoose}</option>
+                  {activeBranches.map(branch => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label>{t.customerLocation}</label>
             <CheckoutLocationMap merchant={activeMerchant} latitude={dropoffLat} longitude={dropoffLng} onSelect={(lat, lng, place) => { setDropoffLat(lat); setDropoffLng(lng); if (place) setAddress(place); }} t={t}/>
             <label>
@@ -776,7 +1411,7 @@ export default function CustomerStorefront({ lang }: Props) {
 
             <button
               className="customer-v2-submit"
-              disabled={!cart.length || !address.trim() || dropoffLat == null || dropoffLng == null || !activeMerchant || activeMerchant.latitude == null || activeMerchant.longitude == null || submitting}
+              disabled={!cart.length || cartInvalid || !address.trim() || dropoffLat == null || dropoffLng == null || !activeMerchant || activeMerchant.latitude == null || activeMerchant.longitude == null || (activeBranches.length > 1 && !selectedBranch) || submitting}
             >
               {submitting ? t.loading : t.placeOrder}
               <span>←</span>
@@ -795,6 +1430,21 @@ export default function CustomerStorefront({ lang }: Props) {
             </p>
           )}
         </aside>
+
+        {cartCount > 0 && (
+          <button
+            type="button"
+            className="customer-v2-cart-fab"
+            onClick={() => {
+              void revalidateCart(true);
+              cartPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+          >
+            <span aria-hidden="true">🛍</span>
+            {t.viewCart}
+            <b>{cartCount}</b>
+          </button>
+        )}
       </div>
     </div>
   );

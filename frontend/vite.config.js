@@ -62,6 +62,7 @@ function buildManifest(role) {
     background_color: meta.backgroundColor,
     categories: [...new Set([meta.category, 'delivery', 'shopping'])],
     icons: [
+      { src: '/icons/waselni-mark.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
       { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
       { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
       { src: '/icons/maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
@@ -107,6 +108,7 @@ function htmlTags(role) {
     { tag: 'meta', attrs: { name: 'format-detection', content: 'telephone=no' }, injectTo: 'head' },
     { tag: 'meta', attrs: { name: 'color-scheme', content: 'light' }, injectTo: 'head' },
     { tag: 'link', attrs: { rel: 'apple-touch-icon', sizes: '180x180', href: '/icons/icon-180.png' }, injectTo: 'head' },
+    { tag: 'link', attrs: { rel: 'icon', type: 'image/svg+xml', href: '/icons/waselni-mark.svg' }, injectTo: 'head' },
     { tag: 'link', attrs: { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/icons/favicon-32.png' }, injectTo: 'head' },
     { tag: 'link', attrs: { rel: 'icon', type: 'image/png', sizes: '16x16', href: '/icons/favicon-16.png' }, injectTo: 'head' },
     { tag: 'link', attrs: { rel: 'mask-icon', href: '/icons/monochrome-512.png', color: meta.themeColor }, injectTo: 'head' },
@@ -210,6 +212,7 @@ function waselniPwa(role, config) {
         '/index.html',
         '/offline.html',
         '/manifest.webmanifest',
+        '/icons/waselni-mark.svg',
         '/icons/icon-192.png',
         '/icons/icon-512.png',
         '/icons/icon-180.png',
@@ -370,6 +373,18 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0',
       port: 5173,
+      strictPort: true,
+      proxy: {
+        '/api': { target: backend, changeOrigin: true },
+        '/media': { target: backend, changeOrigin: true },
+        '/ws': { target: backend, ws: true, changeOrigin: true },
+      },
+    },
+    // `vite preview --mode <portal>` keeps the production build talking to a
+    // local API through the same origin, matching the dev proxy above.
+    preview: {
+      host: '0.0.0.0',
+      port: 4173,
       strictPort: true,
       proxy: {
         '/api': { target: backend, changeOrigin: true },

@@ -72,7 +72,7 @@ const PATHS = {
 
 export default function NavIcon({ name }) {
   return (
-    <span className="nav-icon">
+    <span className={`nav-icon nav-icon--${name}`}>
       <svg
         viewBox="0 0 24 24"
         aria-hidden="true"

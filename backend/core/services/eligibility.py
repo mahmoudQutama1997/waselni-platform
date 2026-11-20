@@ -11,7 +11,7 @@ from decimal import Decimal
 from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
 
-from ..models import CaptainProfile
+from ..models import CaptainProfile, CaptainServiceEligibility, Order
 
 # ---------------------------------------------------------------- reasons
 # Machine-readable code -> English fallback message (the React app translates
@@ -31,6 +31,11 @@ REASON_MESSAGES = {
     "offline": "The captain is offline.",
     "vehicle_mismatch": "This order requires a different vehicle type.",
     "checkpoint_required": "This order requires checkpoint authorization.",
+    "service_not_eligible": "You are not approved for this service type.",
+    "service_suspended": "Your approval for this service is suspended.",
+    "service_not_accepting": "You switched this service off for new tasks.",
+    "outside_working_hours": "You are outside your working hours.",
+    "max_active_tasks": "You already reached your active task limit.",
 }
 WARNING_CODES = ("vehicle_details_incomplete",)
 VALID_VEHICLES = {code for code, _ in CaptainProfile.VEHICLES}
@@ -124,10 +129,69 @@ def set_approval(profile, status):
     return profile
 
 
+# ------------------------------------------------------- services & hours
+def service_eligibility(profile, service):
+    """Return the eligibility row for one service (or None when never approved)."""
+    if profile is None or not service:
+        return None
+    for row in profile.service_eligibilities.all():
+        if row.service == service:
+            return row
+    return None
+
+def approved_services(profile):
+    return [row for row in profile.service_eligibilities.all() if row.is_active]
+
+def _minutes(value):
+    return value.hour * 60 + value.minute
+
+def is_within_working_hours(profile, now=None):
+    """True when ``now`` falls inside the captain's weekly windows.
+
+    A captain who never configured a schedule stays available at all times, so
+    legacy accounts keep working exactly as before.
+    """
+    if profile is None:
+        return False
+    windows = list(profile.working_windows.all())
+    if not windows:
+        return True
+    now = now or timezone.localtime()
+    today = now.weekday()
+    current = _minutes(now.time())
+    inside = False
+    for window in windows:
+        if window.weekday != today:
+            continue
+        start, end = _minutes(window.start_time), _minutes(window.end_time)
+        if start <= current <= end:
+            if window.is_break:
+                return False
+            inside = True
+    return inside
+
+def active_task_count(profile):
+    if profile is None:
+        return 0
+    return Order.objects.filter(
+        captain=profile, status__in=("assigned", "picked_up", "delivering"),
+    ).count()
+
+
 # ------------------------------------------------------------ order rules
 def order_compatibility_reasons(profile, order):
-    """Per-order rules (vehicle type, checkpoint).  Empty list means compatible."""
+    """Per-order rules (service approval, vehicle type, checkpoint)."""
     reasons = []
+    service = order.resolved_service() if hasattr(order, "resolved_service") else ""
+    row = service_eligibility(profile, service)
+    if row is None:
+        reasons.append("service_not_eligible")
+    elif row.status == "suspended":
+        reasons.append("service_suspended")
+    elif not row.is_active:
+        reasons.append("service_not_eligible")
+    elif not row.accepting:
+        reasons.append("service_not_accepting")
     if order.required_vehicle not in ("any", profile.vehicle_type):
         reasons.append("vehicle_mismatch")
     if order.requires_checkpoint and not profile.checkpoint_badge:
@@ -183,17 +247,29 @@ def evaluate_captain(user, profile=None, order=None, today=None):
         blockers.append("subscription_" + sub["status"])
 
     can_go_online = not blockers
-    can_receive = can_go_online and online
+    available_now = is_within_working_hours(profile)
+    can_receive = can_go_online and online and available_now
     reasons = list(blockers)
     if can_go_online and not online:
         reasons.append("offline")
+    if can_go_online and online and not available_now:
+        reasons.append("outside_working_hours")
 
     order_reasons = []
     vehicle_matches = checkpoint_ok = None
+    at_capacity = False
     if order is not None and profile is not None:
         order_reasons = order_compatibility_reasons(profile, order)
         vehicle_matches = "vehicle_mismatch" not in order_reasons
         checkpoint_ok = "checkpoint_required" not in order_reasons
+        if profile.max_active_tasks:
+            # An order already assigned to the captain never blocks itself.
+            at_capacity = (
+                order.captain_id != profile.id
+                and active_task_count(profile) >= profile.max_active_tasks
+            )
+            if at_capacity:
+                order_reasons.append("max_active_tasks")
         reasons += order_reasons
 
     warnings = []
@@ -217,6 +293,14 @@ def evaluate_captain(user, profile=None, order=None, today=None):
                        "required_by_order": bool(order.requires_checkpoint) if order is not None else None,
                        "authorized": checkpoint_ok},
         "can_go_online": can_go_online,
+        "available_now": available_now,
+        "active_tasks": active_task_count(profile) if profile is not None else 0,
+        "max_active_tasks": profile.max_active_tasks if profile is not None else None,
+        "services": [
+            {"service": row.service, "status": row.status, "accepting": row.accepting,
+             "active": row.is_active, "regions": row.regions}
+            for row in (profile.service_eligibilities.all() if profile is not None else [])
+        ],
         "can_receive_orders": can_receive,
         "can_accept_order": can_receive and not order_reasons if order is not None else can_receive,
         "reasons": reasons,
@@ -254,7 +338,8 @@ def enforce_online_invariant(profile, today=None):
 def eligible_captain_user_ids(order=None, today=None):
     """User IDs of online captains who may receive ``order`` (or any order if None)."""
     profiles = (CaptainProfile.objects.filter(online=True, approved=True, user__is_active=True, user__role="captain")
-                .select_related("user").prefetch_related("user__subscriptions__payments"))
+                .select_related("user")
+                .prefetch_related("user__subscriptions__payments", "service_eligibilities", "working_windows"))
     ids = []
     for p in profiles:
         if evaluate_captain(p.user, p, order=order, today=today)["can_accept_order"]:

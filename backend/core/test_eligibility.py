@@ -14,7 +14,10 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .consumers import OrderEventsConsumer
-from .models import CaptainProfile, Order, Subscription, SubscriptionPayment
+from .models import (
+    CaptainProfile, CaptainServiceEligibility, Order, SERVICE_CODES, Subscription,
+    SubscriptionPayment,
+)
 from .services.eligibility import (
     classify_subscription, enforce_online_invariant, eligible_captain_user_ids,
     evaluate_captain, order_compatibility_reasons, set_approval, subscription_state,
@@ -33,6 +36,12 @@ def make_captain(username="cap", approved=True, rejected=False, online=False, re
     profile = CaptainProfile.objects.create(user=user, approved=approved, rejected=rejected, online=online,
                                             vehicle_type=vehicle, checkpoint_badge=badge,
                                             vehicle_model=model, plate_number=plate)
+    # These tests cover account/vehicle/checkpoint rules, not service gating:
+    # grant every service so dispatch behaviour stays comparable to before.
+    CaptainServiceEligibility.objects.bulk_create([
+        CaptainServiceEligibility(captain=profile, service=code, status="approved")
+        for code in SERVICE_CODES
+    ])
     spans = {
         "active": (TODAY - timedelta(days=2), TODAY + timedelta(days=20), "active"),
         "expired": (TODAY - timedelta(days=40), TODAY - timedelta(days=1), "active"),
@@ -311,12 +320,16 @@ class CaptainApiConsistencyTests(TestCase):
         self.profile.save()
         self.as_admin()
         # Using the *user id* in the URL must not approve this captain.
-        wrong = self.client.post(f"/api/admin/captains/{self.user.id}/approval/", {"status": "approved"}, format="json")
+        wrong = self.client.post(f"/api/admin/captains/{self.user.id}/approval/", {
+            "status": "approved", "reason": "Testing profile identifier",
+        }, format="json")
         self.assertIn(wrong.status_code, (404, 200))
         self.profile.refresh_from_db()
         if self.user.id != self.profile.id:
             self.assertFalse(self.profile.approved)
-        ok = self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {"status": "approved"}, format="json")
+        ok = self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {
+            "status": "approved", "reason": "Documents verified",
+        }, format="json")
         self.assertEqual(ok.status_code, 200, ok.data)
         self.assertEqual(ok.data["captain_profile_id"], self.profile.id)
         self.assertEqual(ok.data["user_id"], self.user.id)
@@ -328,7 +341,9 @@ class CaptainApiConsistencyTests(TestCase):
         self.profile.online = True
         self.profile.save()
         self.as_admin()
-        r = self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {"status": "rejected"}, format="json")
+        r = self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {
+            "status": "rejected", "reason": "Required documents are missing",
+        }, format="json")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data["eligibility"]["approval"]["status"], "rejected")
         self.assertFalse(r.data["online"])
@@ -338,7 +353,9 @@ class CaptainApiConsistencyTests(TestCase):
 
     def test_approval_endpoint_permissions_and_validation(self):
         self.as_captain()
-        self.assertEqual(self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {"status": "approved"}, format="json").status_code, 403)
+        self.assertEqual(self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {
+            "status": "approved", "reason": "Not authorized",
+        }, format="json").status_code, 403)
         self.as_admin()
         self.assertEqual(self.client.post(f"/api/admin/captains/{self.profile.id}/approval/", {"status": "bogus"}, format="json").status_code, 400)
         self.assertEqual(self.client.post("/api/admin/captains/99999/approval/", {"status": "approved"}, format="json").status_code, 404)
@@ -402,10 +419,14 @@ class CaptainApiConsistencyTests(TestCase):
         self.profile.online = True
         self.profile.save()
         self.as_admin()
-        self.assertEqual(self.client.patch(f"/api/admin/users/{self.user.id}/", {"is_active": False}, format="json").status_code, 200)
+        self.assertEqual(self.client.patch(f"/api/admin/users/{self.user.id}/", {
+            "is_active": False, "reason": "Account review",
+        }, format="json").status_code, 200)
         self.profile.refresh_from_db()
         self.assertFalse(self.profile.online)
-        self.client.patch(f"/api/admin/users/{self.user.id}/", {"is_active": True}, format="json")
+        self.client.patch(f"/api/admin/users/{self.user.id}/", {
+            "is_active": True, "reason": "Review completed",
+        }, format="json")
         self.profile.online = True
         self.profile.save()
         sub = Subscription.objects.get(user=self.user)
@@ -478,9 +499,13 @@ class DispatchTests(TestCase):
         ride = make_order(order_type="ride", status="new", required_vehicle="motorcycle")
         self.client.force_authenticate(self.user)
         self.client.post(f"/api/orders/{ride.id}/assign/", {"accepted_delivery_fee": str(ride.delivery_fee)}, format="json")
-        for status in ("picked_up", "delivering", "completed"):
+        for status in ("picked_up", "delivering", "awaiting_confirmation"):
             r = self.client.post(f"/api/orders/{ride.id}/status/", {"status": status}, format="json")
             self.assertEqual(r.status_code, 200, status)
+        self.client.force_authenticate(ride.customer)
+        completed = self.client.post(
+            f"/api/orders/{ride.id}/status/", {"status": "completed"}, format="json")
+        self.assertEqual(completed.status_code, 200, completed.data)
         ride.refresh_from_db()
         self.assertEqual(ride.status, "completed")
 
@@ -499,6 +524,24 @@ class DispatchTests(TestCase):
                 self.assertEqual(r.data["reason"], reason, name)
         order.refresh_from_db()
         self.assertIsNone(order.captain_id)
+
+    def test_assign_requires_exact_delivery_fee(self):
+        order = make_order(delivery_fee=Decimal("7.50"))
+        self.client.force_authenticate(self.user)
+        missing = self.client.post(f"/api/orders/{order.id}/assign/", {}, format="json")
+        self.assertEqual(missing.status_code, 400)
+        invalid = self.client.post(f"/api/orders/{order.id}/assign/",
+                                   {"accepted_delivery_fee": "not-a-number"}, format="json")
+        self.assertEqual(invalid.status_code, 400)
+        wrong = self.client.post(f"/api/orders/{order.id}/assign/",
+                                 {"accepted_delivery_fee": "7.00"}, format="json")
+        self.assertEqual(wrong.status_code, 409)
+        accepted = self.client.post(f"/api/orders/{order.id}/assign/",
+                                    {"accepted_delivery_fee": "7.50"}, format="json")
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        order.refresh_from_db()
+        self.assertEqual(order.status, "assigned")
+        self.assertEqual(order.captain_id, self.profile.id)
 
     def test_assign_blocked_for_vehicle_and_checkpoint_mismatch(self):
         wrong_vehicle = make_order(required_vehicle="car")

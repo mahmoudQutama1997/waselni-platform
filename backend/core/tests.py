@@ -188,7 +188,7 @@ class StoreDeliveryPricingTests(TestCase):
             latitude=Decimal("32.2211"), longitude=Decimal("35.2544"),
         )
         self.product = Product.objects.create(
-            merchant=self.store, name="Test item", price=Decimal("8.00")
+            merchant=self.store, name="Test item", price=Decimal("8.00"), quantity=50
         )
         self.client = APIClient()
         self.client.force_authenticate(self.customer)
@@ -239,6 +239,10 @@ class CashSettlementAfterDeliveryTests(TestCase):
         self.assertFalse(CashSettlement.objects.filter(order=order).exists())
         client = APIClient()
         client.force_authenticate(captain_user)
+        delivered = client.post(f"/api/orders/{order.id}/status/", {"status": "awaiting_confirmation"}, format="json")
+        self.assertEqual(delivered.status_code, 200, delivered.data)
+        self.assertFalse(CashSettlement.objects.filter(order=order).exists())
+        client.force_authenticate(customer)
         response = client.post(f"/api/orders/{order.id}/status/", {"status": "completed"}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         settlement = CashSettlement.objects.get(order=order)
@@ -258,3 +262,5 @@ class CashSettlementAfterDeliveryTests(TestCase):
         self.assertEqual(missing.status_code, 400)
         wrong = client.post(f"/api/orders/{order.id}/assign/", {"accepted_delivery_fee": "18.00"}, format="json")
         self.assertEqual(wrong.status_code, 409)
+        invalid = client.post(f"/api/orders/{order.id}/assign/", {"accepted_delivery_fee": "not-a-number"}, format="json")
+        self.assertEqual(invalid.status_code, 400)
