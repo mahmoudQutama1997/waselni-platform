@@ -16,7 +16,7 @@ export default function MobileNav({ role, t, isFinanceStaff = false }) {
     : items
 
   return (
-    <nav className="mobile-tabbar" aria-label={t.navigation || t.home}>
+    <nav className={`mobile-tabbar${visibleItems.length > 5 ? ' is-scroll' : ''}`} aria-label={t.navigation || t.home}>
       {visibleItems.map((item) => {
         const shortKey = SHORT_LABELS[item.labelKey]
         const label = (shortKey && t[shortKey]) || t[item.labelKey] || item.labelKey

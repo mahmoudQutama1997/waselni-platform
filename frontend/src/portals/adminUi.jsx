@@ -13,6 +13,10 @@ Object.entries({
  he:{business:'סוגי עסקים',activitiesTitle:'סוגי עסקים',activitiesHint:'כל סוג עסק מקושר לשירות פלטפורמה; אישור חנות משייך אותה לשירות אוטומטית.',addActivity:'הוספת סוג עסק',activity:'סוג העסק',linkedService:'שירות מקושר',requiresLicense:'נדרש רישיון',merchantsCount:'חנויות',noService:'ללא שירות',activitySaved:'סוג העסק נשמר'},
 }).forEach(([code,labels])=>{LABELS[code]=Object.assign(LABELS[code]||{},labels)})
 
+Object.assign(LABELS.ar,{descriptionAr:'الوصف بالعربية',descriptionEn:'الوصف بالإنجليزية',linkedActivities:'الأنشطة المرتبطة',fulfilmentService:'الخدمة المنفّذة للطلب',fulfilmentServiceHint:'الخدمة التي تنفّذ طلبات هذا النشاط فعلياً',effectiveService:'تُنفّذ عبر',activeServices:'خدمات مفعّلة',stoppedServices:'خدمات متوقفة',serviceFlowMissing:'بلا دورة طلب — اربطها بخدمة منفّذة قبل التفعيل'})
+Object.assign(LABELS.en,{descriptionAr:'Arabic description',descriptionEn:'English description',linkedActivities:'Linked activities',fulfilmentService:'Service that runs the orders',fulfilmentServiceHint:'The implemented service that actually executes orders for this activity',effectiveService:'Runs through',activeServices:'active services',stoppedServices:'stopped services',serviceFlowMissing:'No order flow — link an implemented service before enabling'})
+Object.assign(LABELS.he,{descriptionAr:'תיאור בערבית',descriptionEn:'תיאור באנגלית',linkedActivities:'סוגי עסקים מקושרים',fulfilmentService:'השירות שמפעיל את ההזמנות',fulfilmentServiceHint:'השירות הפעיל שמריץ בפועל את ההזמנות של סוג העסק',effectiveService:'פועל דרך',activeServices:'שירותים פעילים',stoppedServices:'שירותים מושבתים',serviceFlowMissing:'אין תהליך הזמנה — יש לקשר שירות פעיל לפני ההפעלה'})
+
 export const GLYPHS={
  grid:'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
  layers:'M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5',

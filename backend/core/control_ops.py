@@ -30,7 +30,9 @@ def service_filter(service):
     return (
         Q(service_type=service)
         | Q(merchant__business_category__service__code=service)
+        | Q(merchant__business_category__service__fulfilment_service__code=service)
         | Q(merchant__services__code=service)
+        | Q(merchant__services__fulfilment_service__code=service)
         | Q(merchant__category__in=categories)
     )
 

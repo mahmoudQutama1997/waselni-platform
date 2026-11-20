@@ -363,6 +363,10 @@ img,svg,video,canvas{max-width:100%}
  .mobile-tab.active{color:var(--purple);background:var(--purple-pale)}
  .mobile-tab:active{background:#f0e8fb}
  .mobile-tab span:last-child{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ /* Merchant and customer apps have more destinations than a 5-slot bar fits:
+    keep every entry reachable instead of hiding one. */
+ .mobile-tabbar.is-scroll{grid-auto-columns:minmax(66px,1fr);justify-content:start;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+ .mobile-tabbar.is-scroll::-webkit-scrollbar{display:none}
  input,select,textarea{font-size:16px !important;min-height:46px}
  textarea{min-height:96px}
  button,.button-like{min-height:46px;touch-action:manipulation}

@@ -27,7 +27,9 @@ def merchant_service_q(service):
     """A ``MerchantProfile`` filter matching every real link to ``service``."""
     return (
         Q(business_category__service__code=service)
+        | Q(business_category__service__fulfilment_service__code=service)
         | Q(services__code=service)
+        | Q(services__fulfilment_service__code=service)
         | Q(category__in=legacy_categories_for(service))
     )
 
@@ -36,7 +38,9 @@ def product_service_q(service):
     """The same rule expressed from a ``Product`` queryset."""
     return (
         Q(merchant__business_category__service__code=service)
+        | Q(merchant__business_category__service__fulfilment_service__code=service)
         | Q(merchant__services__code=service)
+        | Q(merchant__services__fulfilment_service__code=service)
         | Q(merchant__category__in=legacy_categories_for(service))
     )
 
@@ -48,8 +52,10 @@ def is_pharmacy_merchant(merchant):
     if merchant.business_category_id:
         activity = merchant.business_category
         service = activity.service if activity is not None else None
-        if service is not None and service.code == "pharmacy":
+        if service is not None and service.effective_code == "pharmacy":
             return True
-    if merchant.pk and merchant.services.filter(code="pharmacy").exists():
+    if merchant.pk and merchant.services.filter(
+        Q(code="pharmacy") | Q(fulfilment_service__code="pharmacy")
+    ).exists():
         return True
     return (merchant.category or "").strip().lower() == "pharmacy"

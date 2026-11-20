@@ -539,13 +539,29 @@ class ChangePasswordView(APIView):
 class MerchantProfileSelfView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get_profile(self, request):
+    def get_profile(self, request, create=False):
         if request.user.role != "merchant":
             raise PermissionDenied("Merchant account required.")
-        try:
-            return MerchantProfile.objects.get(user=request.user)
-        except MerchantProfile.DoesNotExist:
+        profile = (MerchantProfile.objects
+                   .select_related("business_category__service")
+                   .filter(user=request.user).first())
+        if profile is not None:
+            return profile
+        if not create:
             raise NotFound("Store profile has not been created for this account.")
+        # A merchant account without a store yet saves its first draft here: the
+        # store is created as pending and is never visible to customers until an
+        # administrator approves it.
+        shop_name = str(request.data.get("shop_name") or "").strip()
+        if not shop_name:
+            raise ValidationError({"shop_name": "Enter the store name to create your store profile."})
+        return MerchantProfile.objects.create(
+            user=request.user,
+            shop_name=shop_name[:160],
+            category="general",
+            is_open=False,
+            approval_status="pending",
+        )
 
     def get(self, request):
         profile = self.get_profile(request)
@@ -567,7 +583,8 @@ class MerchantProfileSelfView(APIView):
             return "invalid"
 
     def patch(self, request):
-        profile = self.get_profile(request)
+        created = not MerchantProfile.objects.filter(user=request.user).exists()
+        profile = self.get_profile(request, create=True)
         # Merchants may prepare/edit their draft store before subscription activation.
         # Public visibility remains gated by MerchantViewSet and subscription state.
         data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
@@ -588,21 +605,36 @@ class MerchantProfileSelfView(APIView):
         serializer = MerchantProfileSerializer(profile, data=data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         profile = serializer.save()
+        updates = []
+        if created:
+            # Saving a brand new store is not an approval: it must always start
+            # pending and closed to customers.
+            if profile.approval_status != "pending":
+                profile.approval_status = "pending"
+                updates.append("approval_status")
+            if profile.is_open:
+                profile.is_open = False
+                updates.append("is_open")
         # The chosen activity is what puts the store in a service; keep the two in
         # sync so a store is never left without a service to trade under.
         category = profile.business_category if profile.business_category_id else None
         if category is not None:
-            updates = []
             if profile.category != category.code:
                 profile.category = category.code
                 updates.append("category")
-            if updates:
-                profile.save(update_fields=updates)
-            if category.service_id and not profile.services.exists():
-                profile.services.add(category.service)
-        # Re-serialize the saved row so the response reflects any synced fields.
-        return Response(MerchantProfileSerializer(profile, context={"request": request}).data)
-
+            service = category.service
+            if service is not None and not profile.services.exists():
+                profile.services.add(service.effective_service)
+        if updates:
+            profile.save(update_fields=updates)
+        payload = MerchantProfileSerializer(profile, context={"request": request}).data
+        payload["store_created"] = created
+        payload["message"] = (
+            "Store saved successfully. Your store is now awaiting administration approval."
+            if profile.approval_status == "pending"
+            else "Store profile saved successfully."
+        )
+        return Response(payload, status=201 if created else 200)
 
 class MerchantViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = MerchantPublicSerializer
@@ -711,7 +743,7 @@ class AdminUsersView(APIView):
                     raise ValidationError({"vehicle_type": "Choose a valid vehicle type."})
                 if permit_type not in dict(CaptainProfile.PERMITS):
                     raise ValidationError({"permit_type": "Choose a valid permit type."})
-                CaptainProfile.objects.create(
+                profile = CaptainProfile.objects.create(
                     user=user, approved=False, online=False,
                     vehicle_type=vehicle_type,
                     vehicle_model=str(data.get("vehicle_model", "")).strip()[:100],

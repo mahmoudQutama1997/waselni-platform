@@ -36,7 +36,7 @@ export function OverviewPanel({lang,L,onGo}){
  </div>
 }
 
-const BLANK={code:'',name_ar:'',name_en:'',name_he:'',description_ar:'',description_en:'',category:'food_trade',business_type:'merchant',workflow:'merchant_accept',pricing_mode:'fixed',requires_merchant:true,requires_captain:true,requires_specialist:false,requires_booking:false,provider_requirements:'',order_flow:'',working_hours:[],regions:[],sort_order:100,is_active:false,icon:''}
+const BLANK={code:'',name_ar:'',name_en:'',name_he:'',description_ar:'',description_en:'',category:'food_trade',business_type:'merchant',workflow:'merchant_accept',pricing_mode:'fixed',requires_merchant:true,requires_captain:true,requires_specialist:false,requires_booking:false,provider_requirements:'',order_flow:'',working_hours:[],regions:[],fulfilment_service:'',sort_order:100,is_active:false,icon:''}
 
 export function ServicesPanel({lang,L}){
  const resource=useResource(()=>api('/admin/control/services/'),[lang])
@@ -44,12 +44,12 @@ export function ServicesPanel({lang,L}){
  const [query,setQuery]=useState('')
  const meta=resource.data
  function startCreate(){setForm({...BLANK})}
- function startEdit(service){setForm({...service,order_flow:(service.order_flow||[]).join(','),regions:(service.regions||[]).map(r=>r.id)})}
+ function startEdit(service){setForm({...service,order_flow:(service.order_flow||[]).join(','),regions:(service.regions||[]).map(r=>r.id),fulfilment_service:service.fulfilment_service?.id||''})}
  function field(key,value){setForm(current=>({...current,[key]:value}))}
  async function save(){
   if(!form)return;setBusy(true);setError('');setNote('')
-  const payload={...form,order_flow:form.order_flow?String(form.order_flow).split(',').map(x=>x.trim()).filter(Boolean):[],working_hours:form.working_hours||[],regions:form.regions||[]}
-  if(form.id){delete payload.id;delete payload.captains_count;delete payload.merchants_count;delete payload.branches_count;delete payload.active_orders;delete payload.implemented;delete payload.updated_at;delete payload.image}
+  const payload={...form,fulfilment_service:form.fulfilment_service||null,order_flow:form.order_flow?String(form.order_flow).split(',').map(x=>x.trim()).filter(Boolean):[],working_hours:form.working_hours||[],regions:form.regions||[]}
+  if(form.id){delete payload.id;delete payload.captains_count;delete payload.merchants_count;delete payload.branches_count;delete payload.active_orders;delete payload.implemented;delete payload.updated_at;delete payload.image;delete payload.activities;delete payload.activities_count;delete payload.effective_code;delete payload.runs_order_flow}
   try{
    if(form.id)await api(`/admin/control/services/${form.id}/`,{method:'PATCH',body:JSON.stringify(payload)})
    else await api('/admin/control/services/',{method:'POST',body:JSON.stringify(payload)})
@@ -62,13 +62,15 @@ export function ServicesPanel({lang,L}){
   catch(err){setError(err.message)}finally{setBusy(false)}
  }
  const rows=(meta?.services||[]).filter(row=>!query.trim()||`${row.code} ${row.name_ar} ${row.name_en}`.toLowerCase().includes(query.trim().toLowerCase()))
+ const activeCount=(meta?.services||[]).filter(row=>row.is_active).length
+ const stoppedCount=(meta?.services?.length||0)-activeCount
  return <div className="acc-stack">
   <Card title={L.services} subtitle={L.servicesHint} actions={<div className="row-actions"><button type="button" onClick={startCreate}>{L.addService}</button></div>}>
-   <div className="table-toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input value={query} onChange={event=>setQuery(event.target.value)} placeholder={L.search} aria-label={L.search}/></div><span className="muted-note">{rows.length} / {meta?.services?.length||0}</span></div>
+   <div className="table-toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input value={query} onChange={event=>setQuery(event.target.value)} placeholder={L.search} aria-label={L.search}/></div><span className="muted-note">{rows.length} / {meta?.services?.length||0} · {activeCount} {L.activeServices} · {stoppedCount} {L.stoppedServices}</span></div>
    <ErrorBox text={resource.error||error}/>
    {meta?.operational_codes&&<p className="muted-note">{L.orderFlowHint}: {meta.operational_codes.join(', ')}</p>}
    {!meta&&!resource.error&&<Loader/>}
-   {meta&&<div className="table-wrap"><table><thead><tr><th>{L.name}</th><th>{L.category}</th><th>{L.workflow}</th><th>{L.pricing}</th><th>{L.servicesLinked}</th><th>{L.status}</th><th/></tr></thead><tbody>{rows.map(service=><tr key={service.id}><td><b>{lang==='ar'?service.name_ar:service.name_en}</b><small className="acc-sub">{service.code} · {lang==='ar'?service.name_en:service.name_ar}</small></td><td>{labelOf(meta.categories,service.category)}</td><td>{labelOf(meta.workflows,service.workflow)}</td><td>{labelOf(meta.pricing_modes,service.pricing_mode)}</td><td><small>{service.merchants_count} {L.merchantsCount} · {service.captains_count} {L.captainsCount} · {service.active_orders} {L.serviceOrders}</small></td><td>{service.is_active?<Status value="active" labels={L}/>:<Status value="inactive" labels={L}/>}</td><td><div className="row-actions"><button type="button" className="secondary" onClick={()=>startEdit(service)}>{L.edit}</button><button type="button" className="secondary" disabled={busy} onClick={()=>toggle(service)}>{service.is_active?L.disable:L.enable}</button></div></td></tr>)}</tbody></table></div>}
+   {meta&&<div className="table-wrap"><table><thead><tr><th>{L.name}</th><th>{L.category}</th><th>{L.workflow}</th><th>{L.pricing}</th><th>{L.servicesLinked}</th><th>{L.linkedActivities}</th><th>{L.status}</th><th/></tr></thead><tbody>{rows.map(service=><tr key={service.id}><td><b>{lang==='ar'?service.name_ar:service.name_en}</b><small className="acc-sub">{service.code} · {lang==='ar'?service.name_en:service.name_ar}</small></td><td>{labelOf(meta.categories,service.category)}</td><td>{labelOf(meta.workflows,service.workflow)}</td><td>{labelOf(meta.pricing_modes,service.pricing_mode)}</td><td><small>{service.merchants_count} {L.merchantsCount} · {service.captains_count} {L.captainsCount} · {service.active_orders} {L.serviceOrders}</small></td><td><small>{(service.activities||[]).map(row=>lang==='ar'?row.name_ar:row.name_en).join(' · ')||'—'}</small><small className="acc-sub">{service.effective_code&&service.effective_code!==service.code?`${L.effectiveService}: ${service.effective_code}`:service.runs_order_flow?'':L.serviceFlowMissing}</small></td><td>{service.is_active?<Status value="active" labels={L}/>:<Status value="inactive" labels={L}/>}</td><td><div className="row-actions"><button type="button" className="secondary" onClick={()=>startEdit(service)}>{L.edit}</button><button type="button" className="secondary" disabled={busy} onClick={()=>toggle(service)}>{service.is_active?L.disable:L.enable}</button></div></td></tr>)}</tbody></table></div>}
    {note&&<p className="success-note">{note}</p>}
   </Card>
   {form&&<Card title={form.id?L.editService:L.addService} actions={<button type="button" className="ghost" onClick={()=>setForm(null)}>{L.close}</button>}>
@@ -76,6 +78,9 @@ export function ServicesPanel({lang,L}){
     <Field label={L.code} hint="flowers">{<input value={form.code} disabled={!!form.id} onChange={event=>field('code',event.target.value)} placeholder="flowers"/>}</Field>
     <Field label={L.nameAr}>{<input value={form.name_ar} onChange={event=>field('name_ar',event.target.value)}/>}</Field>
     <Field label={L.nameEn}>{<input value={form.name_en} onChange={event=>field('name_en',event.target.value)}/>}</Field>
+    <Field label={L.descriptionAr}><textarea rows={2} value={form.description_ar||''} onChange={event=>field('description_ar',event.target.value)}/></Field>
+    <Field label={L.descriptionEn}><textarea rows={2} value={form.description_en||''} onChange={event=>field('description_en',event.target.value)}/></Field>
+    <Field label={L.fulfilmentService} hint={L.fulfilmentServiceHint}>{<select value={form.fulfilment_service||''} onChange={event=>field('fulfilment_service',event.target.value)}><option value="">—</option>{(meta?.services||[]).filter(row=>row.is_operational&&row.id!==form.id).map(row=><option key={row.id} value={row.id}>{lang==='ar'?row.name_ar:row.name_en}</option>)}</select>}</Field>
     <Field label={L.category}>{<select value={form.category} onChange={event=>field('category',event.target.value)}>{meta?.categories.map(row=><option key={row.code} value={row.code}>{row.label}</option>)}</select>}</Field>
     <Field label={L.businessType}>{<select value={form.business_type} onChange={event=>field('business_type',event.target.value)}>{meta?.business_types.map(row=><option key={row.code} value={row.code}>{row.label}</option>)}</select>}</Field>
     <Field label={L.workflow}>{<select value={form.workflow} onChange={event=>field('workflow',event.target.value)}>{meta?.workflows.map(row=><option key={row.code} value={row.code}>{row.label}</option>)}</select>}</Field>
@@ -89,7 +94,7 @@ export function ServicesPanel({lang,L}){
      <label><input type="checkbox" checked={form.requires_booking} onChange={event=>field('requires_booking',event.target.checked)}/>{L.hours}</label>
     </div>
     <Field label={L.regions}>{<div className="acc-checks">{meta?.regions.map(region=><label key={region.id}><input type="checkbox" checked={(form.regions||[]).includes(region.id)} onChange={event=>field('regions',event.target.checked?[...(form.regions||[]),region.id]:(form.regions||[]).filter(id=>id!==region.id))}/>{region.name_en}</label>)}{!meta?.regions.length&&<small>{L.empty}</small>}</div>}</Field>
-    <Field label={L.active}>{<input type="checkbox" checked={!!form.is_active} onChange={event=>field('is_active',event.target.checked)}/>}</Field>
+    <Field label={L.active} hint={form.is_operational||form.fulfilment_service?'':L.serviceFlowMissing}>{<input type="checkbox" checked={!!form.is_active} onChange={event=>field('is_active',event.target.checked)}/>}</Field>
    </div>
    <ErrorBox text={error}/>
    <div className="row-actions"><button type="button" disabled={busy||!form.code||!form.name_ar||!form.name_en} onClick={save}>{busy?L.loading:L.save}</button><button type="button" className="secondary" onClick={()=>setForm(null)}>{L.cancel}</button></div>

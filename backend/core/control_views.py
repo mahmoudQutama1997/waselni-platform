@@ -104,6 +104,17 @@ def service_payload(service, request=None):
         "order_flow": service.order_flow,
         "working_hours": service.working_hours,
         "regions": [{"id": r.id, "code": r.code, "name_ar": r.name_ar, "name_en": r.name_en} for r in service.regions.all()],
+        "fulfilment_service": (
+            {
+                "id": service.fulfilment_service.id,
+                "code": service.fulfilment_service.code,
+                "name_ar": service.fulfilment_service.name_ar,
+                "name_en": service.fulfilment_service.name_en,
+            }
+            if service.fulfilment_service_id else None
+        ),
+        "effective_code": service.effective_code,
+        "runs_order_flow": service.runs_order_flow,
         "sort_order": service.sort_order,
         "updated_at": service.updated_at.isoformat() if service.updated_at else None,
     }
@@ -179,8 +190,15 @@ class ServiceCatalogView(APIView):
 
     def get(self, request):
         lang = (request.query_params.get("lang") or "ar").lower()
-        rows = (PlatformService.objects.filter(is_active=True, is_operational=True)
-                .prefetch_related("regions").order_by("sort_order", "id"))
+        rows = [
+            service for service in
+            PlatformService.objects.filter(is_active=True)
+            .select_related("fulfilment_service").prefetch_related("regions")
+            .order_by("sort_order", "id")
+            # An enabled catalogue entry is offered when its own flow or the
+            # implemented flow it is linked to exists.
+            if service.runs_order_flow
+        ]
         countries = []
         for service in rows:
             name = service.name_ar if lang == "ar" else (service.name_he if lang == "he" and service.name_he else service.name_en)
@@ -196,6 +214,7 @@ class ServiceCatalogView(APIView):
                 "icon": service.icon,
                 "workflow": service.workflow,
                 "pricing_mode": service.pricing_mode,
+                "effective_code": service.effective_code,
                 "regions": [region.code for region in service.regions.all() if region.is_active],
             })
         return Response(countries)
@@ -281,9 +300,19 @@ class AdminServicesView(APIView):
             Order.objects.exclude(status__in=["completed", "cancelled"])
             .values_list("service_type").annotate(total=Count("id"))
         )
+        categories_by_service = {}
+        for category in BusinessCategory.objects.order_by("sort_order", "code"):
+            if category.service_id:
+                categories_by_service.setdefault(category.service_id, []).append(category)
         rows = []
         for service in services:
             row = service_payload(service, request)
+            row["activities"] = [
+                {"id": c.id, "code": c.code, "name_ar": c.name_ar, "name_en": c.name_en,
+                 "is_active": c.is_active}
+                for c in categories_by_service.get(service.id, [])
+            ]
+            row["activities_count"] = len(row["activities"])
             row["captains_count"] = approved_captains.get(service.code, 0)
             row["merchants_count"] = merchant_counts.get(service.code, 0)
             row["branches_count"] = branch_counts.get(service.code, 0)
@@ -398,10 +427,22 @@ class AdminServiceDetailView(APIView):
                 if not isinstance(data["working_hours"], list) or len(data["working_hours"]) > 21:
                     raise ValidationError({"working_hours": "Send at most 21 weekly rows."})
                 service.working_hours = data["working_hours"]
+            if "fulfilment_service" in data:
+                raw = data.get("fulfilment_service")
+                if raw in (None, "", 0, "0"):
+                    service.fulfilment_service = None
+                else:
+                    target = (PlatformService.objects.filter(pk=raw).first()
+                              if str(raw).isdigit() else None)
+                    if target is None or target.pk == service.pk:
+                        raise ValidationError({"fulfilment_service": "Choose a different, valid service."})
+                    if target.fulfilment_service_id:
+                        raise ValidationError({"fulfilment_service": "Choose a service that runs its own order flow."})
+                    service.fulfilment_service = target
             if "is_active" in data:
                 wanted = as_bool(data["is_active"])
-                if wanted and not service.is_operational:
-                    raise ValidationError({"is_active": "This service has no implemented order flow yet, so it cannot be offered to customers."})
+                if wanted and not service.runs_order_flow:
+                    raise ValidationError({"is_active": "This service has no implemented order flow yet. Link it to an implemented service (for example Food delivery) before enabling it."})
                 service.is_active = wanted
             service.save()
             if "regions" in data:
@@ -566,7 +607,9 @@ class AdminProvidersView(APIView):
                 if status == "approved" and store.business_category_id and not store.services.exists():
                     service = store.business_category.service
                     if service is not None:
-                        store.services.add(service)
+                        # Enabling a store means enabling the flow that executes
+                        # its orders, not the catalogue row of its activity.
+                        store.services.add(service.effective_service)
                 if status in ("rejected", "suspended"):
                     store.is_open = False
             for field in ("shop_name", "category", "address", "opening_hours"):
@@ -882,10 +925,11 @@ class AdminBusinessCategoryDetailView(APIView):
                 category.sort_order = small_int(data["sort_order"])
             category.save()
             # Existing stores follow their activity's service when they had none.
-            if category.service_id:
+            if category.service_id and category.service is not None:
+                effective = category.service.effective_service
                 for store in category.merchants.all():
                     if not store.services.exists():
-                        store.services.add(category.service)
+                        store.services.add(effective)
             record_audit(request.user, "business_category.update", "business_category", category.id,
                          f"Updated business activity {category.name_en}", before=before,
                          after={"name_ar": category.name_ar, "name_en": category.name_en,

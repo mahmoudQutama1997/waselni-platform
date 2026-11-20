@@ -103,7 +103,10 @@ class MerchantProfile(models.Model):
     def service_type(self):
         linked = self.business_category.service if self.business_category_id else None
         if linked is not None:
-            return linked.code
+            # A catalogue entry such as "Bakery" is executed by the implemented
+            # store flow it is linked to, so orders and catalogue filters always
+            # agree with the admin-managed activity.
+            return linked.effective_code
         return MERCHANT_CATEGORY_SERVICE.get((self.category or "").strip().lower(), "food")
 
 
@@ -840,6 +843,13 @@ class PlatformService(models.Model):
     order_flow = models.JSONField(default=list, blank=True)
     working_hours = models.JSONField(default=list, blank=True)
     regions = models.ManyToManyField(ServiceRegion, blank=True, related_name="services")
+    # Which implemented service runs the orders of this catalogue entry. The
+    # six SERVICE_CODES own real order flows; activities such as "Restaurants"
+    # or "Bakeries" are executed by one of them instead of duplicating a flow.
+    fulfilment_service = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="catalogue_aliases",
+        help_text="Implemented service that runs orders for this catalogue entry.",
+    )
     sort_order = models.PositiveSmallIntegerField(default=100)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -854,15 +864,40 @@ class PlatformService(models.Model):
     def display_name(self):
         return self.name_en or self.code
 
+    @property
+    def effective_service(self):
+        """The service whose order flow actually executes this entry."""
+        alias = self.fulfilment_service if self.fulfilment_service_id else None
+        return alias if alias is not None else self
+
+    @property
+    def effective_code(self):
+        return self.effective_service.code
+
+    @property
+    def runs_order_flow(self):
+        """True when this entry can be offered: its own flow or its linked flow exists."""
+        if self.is_operational:
+            return True
+        alias = self.fulfilment_service if self.fulfilment_service_id else None
+        return bool(alias and alias.is_operational)
+
+    @property
+    def is_offered_to_customers(self):
+        return bool(self.is_active and self.runs_order_flow)
+
     @classmethod
     def active_codes(cls):
-        return set(cls.objects.filter(is_active=True, is_operational=True).values_list("code", flat=True))
+        return {
+            service.code for service in cls.objects.select_related("fulfilment_service").all()
+            if service.is_offered_to_customers
+        }
 
     @classmethod
     def is_offered(cls, code):
         """False only when a configured service is switched off for customers."""
-        state = cls.objects.filter(code=code).values_list("is_active", "is_operational").first()
-        return state is None or (state[0] and state[1])
+        service = cls.objects.select_related("fulfilment_service").filter(code=code).first()
+        return service is None or service.is_offered_to_customers
 
 
 class PlatformSettings(models.Model):
