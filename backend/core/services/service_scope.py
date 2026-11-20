@@ -18,31 +18,58 @@ from django.db.models import Q
 from ..models import MERCHANT_CATEGORY_SERVICE
 
 
+# Store rows that never received an activity (the merchant-account form creates
+# them with ``category="general"``) have no service relation at all. The console
+# and the merchant API still report such a store as a food store, because
+# ``MerchantProfile.service_type`` falls back to the generic store flow. The
+# catalogue has to resolve them the same way: otherwise an approved, open
+# restaurant is listed under Food in administration but is missing from the
+# customer app. The fallback only covers these "no activity chosen" values, so a
+# store parked on a real activity is never mixed into another service.
+UNRESOLVED_STORE_CATEGORIES = ("", "general", "general_store", "other")
+FALLBACK_SERVICE = "food"
+
+
 def legacy_categories_for(service):
     """Legacy free-text category values that map to ``service``."""
     return [category for category, code in MERCHANT_CATEGORY_SERVICE.items() if code == service]
 
 
+def unresolved_store_q(prefix=""):
+    """Stores with no activity, no explicit service and no declared trade."""
+    return (
+        Q(**{f"{prefix}business_category__isnull": True})
+        & Q(**{f"{prefix}services__isnull": True})
+        & Q(**{f"{prefix}category__in": UNRESOLVED_STORE_CATEGORIES})
+    )
+
+
 def merchant_service_q(service):
     """A ``MerchantProfile`` filter matching every real link to ``service``."""
-    return (
+    query = (
         Q(business_category__service__code=service)
         | Q(business_category__service__fulfilment_service__code=service)
         | Q(services__code=service)
         | Q(services__fulfilment_service__code=service)
         | Q(category__in=legacy_categories_for(service))
     )
+    if service == FALLBACK_SERVICE:
+        query |= unresolved_store_q()
+    return query
 
 
 def product_service_q(service):
     """The same rule expressed from a ``Product`` queryset."""
-    return (
+    query = (
         Q(merchant__business_category__service__code=service)
         | Q(merchant__business_category__service__fulfilment_service__code=service)
         | Q(merchant__services__code=service)
         | Q(merchant__services__fulfilment_service__code=service)
         | Q(merchant__category__in=legacy_categories_for(service))
     )
+    if service == FALLBACK_SERVICE:
+        query |= unresolved_store_q("merchant__")
+    return query
 
 
 def is_pharmacy_merchant(merchant):
