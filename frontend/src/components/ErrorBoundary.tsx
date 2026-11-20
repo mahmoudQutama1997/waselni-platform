@@ -6,6 +6,9 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
  *
  * `resetKey` (usually the current pathname) clears the trapped error when the
  * user navigates somewhere else, so a single failing page never locks the app.
+ *
+ * The fallback never claims that the user's data is intact: the boundary cannot
+ * verify that, so it only states what happened and what the user can do next.
  */
 type Props = {
   children: ReactNode
@@ -26,21 +29,21 @@ const COPY: Record<'ar' | 'he' | 'en', {
 }> = {
   ar: {
     title: 'تعذّر عرض هذه الصفحة',
-    body: 'حدث خطأ غير متوقع أثناء عرض الشاشة. بياناتك وطلباتك سليمة — يمكنك إعادة المحاولة أو العودة لبقية الخدمات.',
+    body: 'حدث خطأ غير متوقع أثناء عرض هذه الشاشة. جرّب إعادة المحاولة، وإن استمرت المشكلة أعد تحميل الصفحة أو عُد إلى بقية الخدمات. التفاصيل التقنية مسجّلة في وحدة تحكم المتصفح.',
     retry: 'إعادة المحاولة',
     reload: 'إعادة تحميل الصفحة',
     details: 'تفاصيل تقنية',
   },
   he: {
     title: 'לא ניתן להציג את המסך הזה',
-    body: 'אירעה שגיאה בלתי צפויה בזמן הצגת המסך. הנתונים וההזמנות שלך תקינים — אפשר לנסות שוב או לחזור לשאר השירותים.',
+    body: 'אירעה שגיאה בלתי צפויה בזמן הצגת המסך. נסו שוב, ואם הבעיה נמשכת רעננו את הדף או חזרו לשאר השירותים. הפרטים הטכניים נרשמו בקונסולת הדפדפן.',
     retry: 'נסה שוב',
     reload: 'טעינת הדף מחדש',
     details: 'פרטים טכניים',
   },
   en: {
     title: 'This screen could not be shown',
-    body: 'Something unexpected went wrong while rendering. Your data and orders are safe — you can try again or go back to the other services.',
+    body: 'Something unexpected went wrong while rendering this screen. Try again, and if the problem persists reload the page or go back to the other services. Technical details are logged in the browser console.',
     retry: 'Try again',
     reload: 'Reload page',
     details: 'Technical details',

@@ -180,7 +180,7 @@ export function AlertsPanel({lang,L}){
  return <div className="acc-stack"><Card title={L.notifications} actions={<button type="button" className="secondary" onClick={resource.reload}>{L.refresh}</button>}>
   <ErrorBox text={resource.error}/>
   {!data&&!resource.error&&<Loader/>}
-  {data&&<div className="acc-grid three">{data.alerts.map(alert=><div className={`acc-alert-card ${alert.severity}`} key={alert.kind}><div className="acc-alert-head"><span>{alert.kind}</span><b>{alert.count}</b></div>{alert.samples.map(sample=><small key={sample.id}>• {sample.label}</small>)}{!alert.count&&<small className="muted-note">{L.noAlerts}</small>}</div>)}</div>}
+  {data&&<div className="acc-grid three">{(Array.isArray(data.alerts)?data.alerts:[]).filter(alert=>alert&&typeof alert==='object').map(alert=><div className={`acc-alert-card ${alert.severity||'info'}`} key={alert.kind||String(Math.random())}><div className="acc-alert-head"><span>{alert.kind}</span><b>{alert.count??0}</b></div>{(Array.isArray(alert.samples)?alert.samples:[]).filter(sample=>sample&&typeof sample==='object').map((sample,index)=><small key={sample.id??index}>• {sample.label||''}</small>)}{!alert.count&&<small className="muted-note">{L.noAlerts}</small>}</div>)}{!Array.isArray(data.alerts)&&<p className="muted-note">{L.empty}</p>}</div>}
  </Card></div>
 }
 

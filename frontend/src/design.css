@@ -1897,3 +1897,17 @@ tbody tr:hover { background: #faf8fd; }
 .acc-activity-request button{font-size:12px;padding:6px 10px}
 .store-profile select{width:100%;min-height:44px;padding:10px 12px;border-radius:12px;border:1px solid #e2d8f1;background:#fff;color:#2c1d45;font:inherit;cursor:pointer}
 .store-profile select:focus-visible{outline:2px solid #7c3aed;outline-offset:2px}
+
+/* Unified brand mark: one vector logo asset replaces the old letter badge in every portal. */
+.brand-logo{display:inline-flex;align-items:center;gap:10px;min-width:0}
+.brand-logo img{display:block;width:42px;height:42px;border-radius:13px;box-shadow:0 8px 20px rgba(63,28,125,.24)}
+.brand-logo b{font-size:21px;letter-spacing:-.2px;line-height:1.2}
+.brand-logo--sm img{width:38px;height:38px;border-radius:12px}
+.brand-logo--lg img{width:66px;height:66px;border-radius:21px;box-shadow:0 16px 34px rgba(63,28,125,.26)}
+.login-brand{display:flex;justify-content:center;margin:0 auto 10px}
+.login-brand img{margin:0}
+.side-brand{display:flex;align-items:center;gap:10px}
+.side-brand .brand-logo img{box-shadow:0 8px 22px rgba(9,3,20,.35)}
+.acc-nav-head .brand-logo img{width:36px;height:36px;border-radius:11px}
+@media(max-width:800px){.side-brand .brand-logo img{width:34px;height:34px;border-radius:11px}.brand-logo b{font-size:19px}}
+@media(prefers-reduced-motion:reduce){.brand-logo img{box-shadow:none}}

@@ -2,6 +2,7 @@ import {useEffect,useMemo,useState} from 'react'
 import {Link,useNavigate,useParams} from 'react-router-dom'
 import {api} from '../api'
 import {Glyph,LABELS,Loader,ErrorBox} from './adminUi.jsx'
+import Brand from '../components/Brand'
 import {BranchesPanel,CaptainsPanel,OverviewPanel,ProvidersPanel,ServicesPanel} from './AdminPanelsCore.jsx'
 import {ActivitiesPanel} from './AdminPanelsActivities.jsx'
 import {AlertsPanel,AnalyticsPanel,AuditPanel,FinancePanel,MapPanel,OperationsPanel,SettingsPanel,StaffPanel,SupportPanel} from './AdminPanelsOps.jsx'
@@ -67,7 +68,7 @@ export default function AdminControlCenter({lang='ar'}){
  })()
  return <div className="acc-shell">
   <nav className="acc-nav" aria-label={L.title}>
-   <div className="acc-nav-head"><span className="brand-mark small">و</span><div><b>{L.title}</b><small>{me.role_label}</small></div></div>
+   <div className="acc-nav-head"><Brand name="" size="sm" /><div><b>{L.title}</b><small>{me.role_label}</small></div></div>
    <div className="acc-nav-links">
     {visible.map(([key,icon])=><button type="button" key={key} className={current===key?'is-active':''} onClick={()=>go(key)}><Glyph name={icon} size={17}/><span>{key==='pharmacy_products'?(lang==='en'?'Pharmacy review':lang==='he'?'בדיקת מוצרים':'مراجعة منتجات الصيدليات'):L[key]}</span>{key==='notifications'&&alerts>0&&<b className="acc-badge">{alerts}</b>}</button>)}
    </div>

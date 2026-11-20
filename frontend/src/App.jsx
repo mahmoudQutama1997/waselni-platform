@@ -1,7 +1,7 @@
 import CustomerStorefront from './customer/CustomerStorefront.tsx'
 import L from './map/leaflet'
 import React,{useEffect,useMemo,useState,useRef} from 'react'
-import {Routes,Route,Link,NavLink,Navigate,useLocation,useNavigate} from 'react-router-dom'
+import {Routes,Route,Link,NavLink,Navigate,useLocation,useNavigate,useParams} from 'react-router-dom'
 import {api,login,token,orderSocket,clearAuth,mediaUrl,roundCoordinate} from './api'
 import {attachAttribution,createTileLayer} from './map/tiles'
 import {mapMarker,createMarkerIcon} from './map/markers'
@@ -23,6 +23,7 @@ const newRequestKey=()=>globalThis.crypto?.randomUUID?.()||`waselni-${Date.now()
 import {dict} from './i18n'
 import NavIcon from './pwa/navIcons.jsx'
 import ServiceIcon from './components/ServiceIcon'
+import Brand from './components/Brand'
 import MobileNav from './pwa/MobileNav.jsx'
 import PwaBanners from './pwa/PwaBanners.jsx'
 import ConfirmHost,{confirmAction} from './pwa/confirm.jsx'
@@ -124,7 +125,7 @@ function App(){
   <PwaBanners lang={lang} showInstallPrompt={false}/>
   <main className="login-shell">
    <section className="login-card auth-card">
-    <div className="brand-mark">و</div>
+    <Brand name="" size="lg" className="login-brand" />
     <h1>{t.brand}</h1>
     <p>{APP_ROLE==='all'?t.tagline:appRoleLabel}</p>
     <label>{t.language}</label>
@@ -180,12 +181,12 @@ function App(){
    </section>
   </main>
  </>
- if(me.must_change_password)return <main className="login-shell"><section className="login-card"><div className="brand-mark">و</div><h1>{t.changePasswordTitle}</h1><p>{t.changePasswordNote}</p><form onSubmit={changeInitialPassword}><label>{t.currentPassword}</label><input name="current_password" type="password" required/><label>{t.newPassword}</label><input name="new_password" type="password" minLength={8} required/><button>{t.changePassword}</button>{passwordError&&<p className="error">{passwordError}</p>}</form><button className="ghost" onClick={signOut}>{t.logout}</button></section></main>
+ if(me.must_change_password)return <main className="login-shell"><section className="login-card"><Brand name="" size="lg" className="login-brand" /><h1>{t.changePasswordTitle}</h1><p>{t.changePasswordNote}</p><form onSubmit={changeInitialPassword}><label>{t.currentPassword}</label><input name="current_password" type="password" required/><label>{t.newPassword}</label><input name="new_password" type="password" minLength={8} required/><button>{t.changePassword}</button>{passwordError&&<p className="error">{passwordError}</p>}</form><button className="ghost" onClick={signOut}>{t.logout}</button></section></main>
  const role=me.role
  const pageKey=location.pathname==='/'?'home':location.pathname.slice(1).split('/')[0]
  const titleKey=pageKey==='home'?'home':(PAGE_TITLE_KEY[pageKey]||'home')
  const subtitle=pageKey==='home'?(role==='admin'?t.overview:role==='captain'?t.captainWorkspace:role==='merchant'?t.liveUpdates:t.tagline):(pageKey==='orders'?t.liveUpdates:pageKey==='catalog'?t.catalogSubtitle:pageKey==='admin'?t.overview:pageKey==='settlements'?t.settlementWorkflowHint:pageKey==='ride'?t.rideSubtitle:pageKey==='support'?t.ticketDetails||t.support:'')
- return <div className="app" data-role={role}><PwaBanners lang={lang}/><ConfirmHost lang={lang}/><ToastViewport t={t}/><aside className="sidebar"><div className="side-brand"><span className="brand-mark small">و</span><b>{t.brand}</b></div><Link className="user-chip" to="/account" title={t.accountProfile}><span className="user-chip-avatar">{me.profile_image?<SafeImage src={me.profile_image} alt=""/>:<span>◉</span>}</span><span><strong>{me.first_name||me.username}</strong><small>{t[`${role}Role`]||t[role]||role}</small></span></Link><nav aria-label={t.platform}>
+ return <div className="app" data-role={role}><PwaBanners lang={lang}/><ConfirmHost lang={lang}/><ToastViewport t={t}/><aside className="sidebar"><div className="side-brand"><Brand name="" size="sm" className="side-brand-mark" /><b>{t.brand}</b></div><Link className="user-chip" to="/account" title={t.accountProfile}><span className="user-chip-avatar">{me.profile_image?<SafeImage src={me.profile_image} alt=""/>:<span>◉</span>}</span><span><strong>{me.first_name||me.username}</strong><small>{t[`${role}Role`]||t[role]||role}</small></span></Link><nav aria-label={t.platform}>
  <NavLink to="/" end><NavIcon name="home"/>{t.home}</NavLink><NavLink to="/account"><NavIcon name="user"/>{t.accountProfile}</NavLink><NavLink to="/orders"><NavIcon name="orders"/>{t.orders}</NavLink>{role==='customer'&&<NavLink to="/ride"><NavIcon name="ride"/>{t.rideService}</NavLink>}{role==='merchant'&&<><NavLink to="/operations"><NavIcon name="store"/>{t.storeManagement||t.profile}</NavLink><NavLink to="/catalog"><NavIcon name="catalog"/>{t.catalog}</NavLink><NavLink to="/reports"><NavIcon name="reports"/>{t.reports}</NavLink><NavLink to="/profile"><NavIcon name="store"/>{t.profile}</NavLink><NavLink to="/settlements"><NavIcon name="money"/>{t.settlements}</NavLink></>}{role==='captain'&&<><NavLink to="/captain"><NavIcon name="captain"/>{t.captain}</NavLink><NavLink to="/settlements"><NavIcon name="money"/>{t.settlements}</NavLink></>}{role==='admin'&&<><NavLink to="/admin"><NavIcon name="dashboard"/>{t.controlCenter||t.dashboard}</NavLink><NavLink to="/settlements"><NavIcon name="money"/>{t.settlements}</NavLink><NavLink to="/support"><NavIcon name="support"/>{t.support}</NavLink></>}
  {me.is_finance_staff&&role!=='admin'&&<NavLink to="/settlements"><NavIcon name="money"/>{t.settlements}</NavLink>}
  {role!=='admin'&&<NavLink to="/support"><NavIcon name="support"/>{t.support}</NavLink>}

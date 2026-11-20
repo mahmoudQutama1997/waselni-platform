@@ -94,9 +94,14 @@ const STATUS_LABELS = {
 function describe(notification, lang, role) {
   const copy = COPY[lang] || COPY.ar
   const statusLabels = STATUS_LABELS[lang] || STATUS_LABELS.ar
-  const orderId = notification.order_number || payload.order_number || ''
-  const payload = notification.payload || {}
-  switch (notification.event) {
+  // The payload is optional and may be absent or a non-object after a partial
+  // write; read it before use and never assume its shape.
+  const payload =
+    notification?.payload && typeof notification.payload === 'object'
+      ? notification.payload
+      : {}
+  const orderId = notification?.order_number || payload.order_number || ''
+  switch (notification?.event) {
     case 'order.created': {
       const parts = []
       if (payload.customer_name) parts.push(`${copy.customer}: ${payload.customer_name}`)
@@ -163,10 +168,19 @@ export default function NotificationCenter({ lang = 'ar', role }) {
   const load = useCallback(async () => {
     try {
       const data = await api('/notifications/')
-      const list = Array.isArray(data) ? data : data.results || []
+      const raw = Array.isArray(data) ? data : data?.results || []
+      // A paginated proxy or a partial write can leave a hole or a non-object
+      // row in the list; rendering one would throw inside `describe`.
+      const list = (Array.isArray(raw) ? raw : []).filter(
+        row => row !== null && typeof row === 'object' && row.id != null
+      )
       knownRef.current = new Set(list.map(row => row.id))
       setRows(list)
-      setUnread(typeof data.unread === 'number' ? data.unread : list.filter(row => !row.is_read).length)
+      setUnread(
+        typeof data?.unread === 'number'
+          ? data.unread
+          : list.filter(row => !row.is_read).length
+      )
       setError('')
     } catch (e) {
       setError(e.message || copy.error)
@@ -269,7 +283,7 @@ export default function NotificationCenter({ lang = 'ar', role }) {
   function openRow(row) {
     markRead(row)
     setOpen(false)
-    if (row.event.startsWith('stock.')) {
+    if (String(row.event || '').startsWith('stock.')) {
       navigate(role === 'merchant' ? '/catalog' : role === 'admin' ? '/admin' : '/')
     } else {
       navigate('/orders')
