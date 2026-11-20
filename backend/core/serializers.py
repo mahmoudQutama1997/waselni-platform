@@ -80,14 +80,25 @@ class RegisterSerializer(serializers.ModelSerializer):
 class MerchantPublicSerializer(serializers.ModelSerializer):
     service_type = serializers.CharField(read_only=True)
     business_category_code = serializers.SerializerMethodField()
+    business_category_name_ar = serializers.SerializerMethodField()
+    business_category_name_en = serializers.SerializerMethodField()
     branches = serializers.SerializerMethodField()
 
     class Meta:
         model = MerchantProfile
-        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "business_category_code", "address", "latitude", "longitude", "opening_hours", "is_open", "temporarily_closed", "rating", "service_type", "branches"]
+        fields = ["id", "shop_name", "image", "cover_image", "description", "category", "business_category_code", "business_category_name_ar", "business_category_name_en", "address", "latitude", "longitude", "opening_hours", "is_open", "temporarily_closed", "rating", "service_type", "branches"]
 
     def get_business_category_code(self, obj):
         return obj.business_category.code if obj.business_category_id else ""
+
+    def get_business_category_name_ar(self, obj):
+        """The activity label the customer app shows instead of a raw code."""
+        activity = obj.business_category if obj.business_category_id else None
+        return (activity.name_ar or activity.code) if activity is not None else ""
+
+    def get_business_category_name_en(self, obj):
+        activity = obj.business_category if obj.business_category_id else None
+        return (activity.name_en or activity.code) if activity is not None else ""
 
     def get_branches(self, obj):
         """Active branches a customer may choose at checkout."""

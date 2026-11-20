@@ -546,16 +546,31 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
   useEffect(() => {
     let alive = true;
 
-    api(`/merchants/${serviceCode ? `?service=${encodeURIComponent(serviceCode)}` : ''}`)
-      .then(data => {
-        if (alive) setMerchants(rows<Merchant>(data));
-      })
-      .catch(e => {
-        if (alive) setError(e.message || t.orderError);
-      })
-      .finally(() => {
-        if (alive) setLoadingStores(false);
-      });
+    // Administration can approve, open or close a store while the customer keeps
+    // the page open, so the catalogue refreshes on a timer and when the tab comes
+    // back instead of needing an app rebuild or a manual reload.
+    const loadStores = () =>
+      api(`/merchants/${serviceCode ? `?service=${encodeURIComponent(serviceCode)}` : ''}`)
+        .then(data => {
+          if (alive) {
+            setMerchants(rows<Merchant>(data));
+            setError('');
+          }
+        })
+        .catch(e => {
+          if (alive) setError(e.message || t.orderError);
+        })
+        .finally(() => {
+          if (alive) setLoadingStores(false);
+        });
+    const refreshStores = makeCoalescedLoader(loadStores, { minGap: 5000 });
+    refreshStores();
+    const storeTimer = setInterval(refreshStores, 30000);
+    const refreshStoresWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshStores();
+    };
+    window.addEventListener('focus', refreshStoresWhenVisible);
+    document.addEventListener('visibilitychange', refreshStoresWhenVisible);
 
     const loadOrders = () => api('/orders/')
       .then(data => {
@@ -578,6 +593,9 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
     return () => {
       alive = false;
       clearInterval(orderTimer);
+      clearInterval(storeTimer);
+      window.removeEventListener('focus', refreshStoresWhenVisible);
+      document.removeEventListener('visibilitychange', refreshStoresWhenVisible);
     };
   }, [t.orderError, ordersReload, serviceCode]);
 
@@ -1055,7 +1073,11 @@ export default function CustomerStorefront({ lang, serviceCode }: Props) {
 
                     <span className="customer-v2-store-info">
                       <b>{merchant.shop_name}</b>
-                      <small>{merchant.category || t.category}</small>
+                      <small>
+                        {lang === 'ar'
+                          ? merchant.business_category_name_ar || merchant.category || t.category
+                          : merchant.business_category_name_en || merchant.business_category_name_ar || merchant.category || t.category}
+                      </small>
                       {merchant.rating != null && <small>★ {merchant.rating} / 5 · {t.averageRating}</small>}
                       <em className={merchant.is_open ? 'is-open' : 'is-closed'}>
                         {merchant.is_open ? t.open : t.closed}

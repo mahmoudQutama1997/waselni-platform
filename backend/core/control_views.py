@@ -22,6 +22,7 @@ from .models import (
 from .services.admin_control import (
     ADMIN_ROLE_LABELS, PERMISSION_ROLES, admin_role, has_permission, permissions_for, record_audit,
 )
+from .services.service_scope import store_catalogue_visibility
 
 CODE_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 
@@ -531,7 +532,7 @@ class AdminProvidersView(APIView):
         status = request.query_params.get("status") or ""
         query = (request.query_params.get("q") or "").strip().lower()
         qs = (MerchantProfile.objects.select_related("user", "business_category__service", "requested_business_category__service")
-              .prefetch_related("services", "branches").order_by("-created_at"))
+              .prefetch_related("services", "branches", "user__subscriptions").order_by("-created_at"))
         if status in dict(MerchantProfile.APPROVAL_STATES):
             qs = qs.filter(approval_status=status)
         if query:
@@ -570,6 +571,9 @@ class AdminProvidersView(APIView):
                 "services": [s.code for s in store.services.all()],
                 "orders_completed": total.get("orders", 0),
                 "sales": str(total.get("sales") or Decimal("0.00")),
+                # Every gate that keeps this store out of the customer app, so a
+                # hidden store is explained instead of being a silent mystery.
+                "catalogue_visibility": store_catalogue_visibility(store),
             })
         return Response({
             "providers": rows,
